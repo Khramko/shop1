@@ -1,0 +1,578 @@
+{
+  "info": {
+    "name": "Shop Stream App (Event Collaboration)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "End-to-end сценарий ДЗ: регистрация → deposit → заказ (успех и неуспех) → проверка баланса и уведомлений. Использует {{baseUrl}} = http://arch.homework и polling для асинхронных событий Kafka."
+  },
+  "item": [
+    {
+      "name": "01. Register user",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const rnd = Math.random().toString(36).substring(2, 10);",
+              "pm.collectionVariables.set('email', `user_${rnd}@example.com`);",
+              "pm.collectionVariables.set('password', 'password123');",
+              "pm.collectionVariables.set('name', `User ${rnd}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const j = pm.response.json();",
+              "pm.test('Has id and token', () => {",
+              "  pm.expect(j.id).to.be.a('number');",
+              "  pm.expect(j.token).to.be.a('string');",
+              "});",
+              "pm.collectionVariables.set('userId', j.id);",
+              "pm.collectionVariables.set('token', j.token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"{{name}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "register"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "02. Poll account creation",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "const attempt = +(pm.collectionVariables.get('accountPollAttempt') || 0);",
+              "const status = pm.response.code;",
+              "if (status === 500 || status === 404) {",
+              "  if (attempt < 10) {",
+              "    pm.collectionVariables.set('accountPollAttempt', attempt + 1);",
+              "    console.log('Account not ready yet, retrying in 500ms... attempt=' + (attempt+1));",
+              "    postman.setNextRequest('02. Poll account creation');",
+              "  } else {",
+              "    pm.test('Account created within 5s', () => { throw new Error('Account not created'); });",
+              "  }",
+              "} else {",
+              "  pm.collectionVariables.set('accountPollAttempt', 0);",
+              "  pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "  const j = pm.response.json();",
+              "  pm.test('Balance is 0', () => pm.expect(+j.balance).to.eql(0));",
+              "  pm.collectionVariables.set('accountId', j.accountId);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "03. Deposit 1000",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('Balance = 1000', () => pm.expect(+j.balance).to.eql(1000));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 1000\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me/deposit",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me",
+            "deposit"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "04. Create order 300",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "pm.test('Status 202', () => pm.response.to.have.status(202));",
+              "const j = pm.response.json();",
+              "pm.test('Order NEW', () => pm.expect(j.status).to.eql('NEW'));",
+              "pm.collectionVariables.set('order1Id', j.orderId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"price\": 300\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "05. Poll order1 until PAID",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "const attempt = +(pm.collectionVariables.get('order1PollAttempt') || 0);",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "if (j.status === 'NEW' && attempt < 20) {",
+              "  pm.collectionVariables.set('order1PollAttempt', attempt + 1);",
+              "  console.log('Still NEW, retrying... attempt=' + (attempt+1));",
+              "  postman.setNextRequest('05. Poll order1 until PAID');",
+              "} else {",
+              "  pm.collectionVariables.set('order1PollAttempt', 0);",
+              "  pm.test('Order1 PAID', () => pm.expect(j.status).to.eql('PAID'));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{order1Id}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{order1Id}}"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "06. Check balance = 700",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('Balance = 700', () => pm.expect(+j.balance).to.eql(700));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "07. Poll notifications for HAPPY",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "const attempt = +(pm.collectionVariables.get('notif1PollAttempt') || 0);",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const arr = pm.response.json();",
+              "const happy = arr.find(n => n.type === 'HAPPY' && n.orderId == pm.collectionVariables.get('order1Id'));",
+              "if (!happy && attempt < 20) {",
+              "  pm.collectionVariables.set('notif1PollAttempt', attempt + 1);",
+              "  console.log('HAPPY not found, retrying... attempt=' + (attempt+1));",
+              "  postman.setNextRequest('07. Poll notifications for HAPPY');",
+              "} else {",
+              "  pm.collectionVariables.set('notif1PollAttempt', 0);",
+              "  pm.test('HAPPY notification exists for order1', () => pm.expect(happy).to.exist);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/notifications",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "notifications"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "08. Create order 5000",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "pm.test('Status 202', () => pm.response.to.have.status(202));",
+              "const j = pm.response.json();",
+              "pm.test('Order NEW', () => pm.expect(j.status).to.eql('NEW'));",
+              "pm.collectionVariables.set('order2Id', j.orderId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"price\": 5000\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "09. Poll order2 until FAILED",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "const attempt = +(pm.collectionVariables.get('order2PollAttempt') || 0);",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "if (j.status === 'NEW' && attempt < 20) {",
+              "  pm.collectionVariables.set('order2PollAttempt', attempt + 1);",
+              "  console.log('Still NEW, retrying... attempt=' + (attempt+1));",
+              "  postman.setNextRequest('09. Poll order2 until FAILED');",
+              "} else {",
+              "  pm.collectionVariables.set('order2PollAttempt', 0);",
+              "  pm.test('Order2 FAILED', () => pm.expect(j.status).to.eql('FAILED'));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{order2Id}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{order2Id}}"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "10. Balance still 700",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('Balance still 700 (not charged for failed order)', () => pm.expect(+j.balance).to.eql(700));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "11. Poll notifications for ANGRY",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('=== REQUEST ===');",
+              "console.log(pm.request.method, pm.request.url.toString());",
+              "console.log('=== RESPONSE ===');",
+              "console.log('STATUS:', pm.response.code);",
+              "console.log('BODY:', pm.response.text());",
+              "",
+              "const attempt = +(pm.collectionVariables.get('notif2PollAttempt') || 0);",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const arr = pm.response.json();",
+              "const angry = arr.find(n => n.type === 'ANGRY' && n.orderId == pm.collectionVariables.get('order2Id'));",
+              "if (!angry && attempt < 20) {",
+              "  pm.collectionVariables.set('notif2PollAttempt', attempt + 1);",
+              "  console.log('ANGRY not found, retrying... attempt=' + (attempt+1));",
+              "  postman.setNextRequest('11. Poll notifications for ANGRY');",
+              "} else {",
+              "  pm.collectionVariables.set('notif2PollAttempt', 0);",
+              "  pm.test('ANGRY notification exists for order2', () => pm.expect(angry).to.exist);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/notifications",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "notifications"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://arch.homework",
+      "type": "default"
+    }
+  ]
+}

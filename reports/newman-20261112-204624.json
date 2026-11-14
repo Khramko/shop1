@@ -1,0 +1,4787 @@
+{
+  "collection": {
+    "item": [
+      {
+        "id": "43046fd2-35be-428d-ab50-02c1e681686b",
+        "name": "01. Register user",
+        "request": {
+          "url": {
+            "path": [
+              "auth",
+              "register"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"name\": \"{{name}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+          }
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "prerequest",
+            "script": {
+              "id": "2bb45d01-3900-4ad8-a480-3cdfeee5a41d",
+              "type": "text/javascript",
+              "exec": [
+                "const rnd = Math.random().toString(36).substring(2, 10);",
+                "pm.collectionVariables.set('email', `user_${rnd}@example.com`);",
+                "pm.collectionVariables.set('password', 'password123');",
+                "pm.collectionVariables.set('name', `User ${rnd}`);"
+              ],
+              "_lastExecutionId": "db3fba30-827c-42c0-9c05-8bb2a80e0808"
+            }
+          },
+          {
+            "listen": "test",
+            "script": {
+              "id": "c728ea3e-a771-4bd8-9c49-28e7273b1114",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                "const j = pm.response.json();",
+                "pm.test('Has id and token', () => {",
+                "  pm.expect(j.id).to.be.a('number');",
+                "  pm.expect(j.token).to.be.a('string');",
+                "});",
+                "pm.collectionVariables.set('userId', j.id);",
+                "pm.collectionVariables.set('token', j.token);"
+              ],
+              "_lastExecutionId": "c07a65c9-fab3-42fd-b235-da038ea8ea85"
+            }
+          }
+        ]
+      },
+      {
+        "id": "e34a2f8e-e4b5-4e2a-bba8-b5d750d4ce5b",
+        "name": "02. Poll account creation",
+        "request": {
+          "url": {
+            "path": [
+              "billing",
+              "accounts",
+              "me"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            }
+          ],
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "a74df4a8-540d-4a88-b692-d659145fa62e",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "const attempt = +(pm.collectionVariables.get('accountPollAttempt') || 0);",
+                "const status = pm.response.code;",
+                "if (status === 500 || status === 404) {",
+                "  if (attempt < 10) {",
+                "    pm.collectionVariables.set('accountPollAttempt', attempt + 1);",
+                "    console.log('Account not ready yet, retrying in 500ms... attempt=' + (attempt+1));",
+                "    setTimeout(() => {}, 500);",
+                "    postman.setNextRequest('02. Poll account creation');",
+                "  } else {",
+                "    pm.test('Account created within 5s', () => { throw new Error('Account not created'); });",
+                "  }",
+                "} else {",
+                "  pm.collectionVariables.set('accountPollAttempt', 0);",
+                "  pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "  const j = pm.response.json();",
+                "  pm.test('Balance is 0', () => pm.expect(+j.balance).to.eql(0));",
+                "  pm.collectionVariables.set('accountId', j.accountId);",
+                "}"
+              ],
+              "_lastExecutionId": "460b6aef-feed-4856-b453-7c7fd4de286a"
+            }
+          }
+        ]
+      },
+      {
+        "id": "6807ae93-407f-413c-9087-2018fc2a524f",
+        "name": "03. Deposit 1000",
+        "request": {
+          "url": {
+            "path": [
+              "billing",
+              "accounts",
+              "me",
+              "deposit"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"amount\": 1000\n}"
+          }
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "df5f4fcc-7aba-4e83-85ef-dfc3cd4c9142",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "const j = pm.response.json();",
+                "pm.test('Balance = 1000', () => pm.expect(+j.balance).to.eql(1000));"
+              ],
+              "_lastExecutionId": "ff6e0a33-a781-4c19-afe3-52fbb23a08e2"
+            }
+          }
+        ]
+      },
+      {
+        "id": "242a01e2-a085-4aed-bf58-da5796439e1b",
+        "name": "04. Create order 300",
+        "request": {
+          "url": {
+            "path": [
+              "orders"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"price\": 300\n}"
+          }
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "14b0a5b4-0e40-475f-b589-f83009b4e099",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "pm.test('Status 202', () => pm.response.to.have.status(202));",
+                "const j = pm.response.json();",
+                "pm.test('Order NEW', () => pm.expect(j.status).to.eql('NEW'));",
+                "pm.collectionVariables.set('order1Id', j.orderId);"
+              ],
+              "_lastExecutionId": "3c972b8f-417b-48f6-8b26-a38eee55d608"
+            }
+          }
+        ]
+      },
+      {
+        "id": "924c2b76-24e6-40f9-b398-82cb52e8903c",
+        "name": "05. Poll order1 until PAID",
+        "request": {
+          "url": {
+            "path": [
+              "orders",
+              "{{order1Id}}"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            }
+          ],
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "15149888-d5e6-4f84-bf10-f9352f36cdb3",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "const attempt = +(pm.collectionVariables.get('order1PollAttempt') || 0);",
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "const j = pm.response.json();",
+                "if (j.status === 'NEW' && attempt < 20) {",
+                "  pm.collectionVariables.set('order1PollAttempt', attempt + 1);",
+                "  console.log('Still NEW, retrying... attempt=' + (attempt+1));",
+                "  setTimeout(() => {}, 500);",
+                "  postman.setNextRequest('05. Poll order1 until PAID');",
+                "} else {",
+                "  pm.collectionVariables.set('order1PollAttempt', 0);",
+                "  pm.test('Order1 PAID', () => pm.expect(j.status).to.eql('PAID'));",
+                "}"
+              ],
+              "_lastExecutionId": "4bedc536-f237-4280-ab83-594fe79d39b2"
+            }
+          }
+        ]
+      },
+      {
+        "id": "5c3ea723-ded9-4823-80fc-331c6e2171cd",
+        "name": "06. Check balance = 700",
+        "request": {
+          "url": {
+            "path": [
+              "billing",
+              "accounts",
+              "me"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            }
+          ],
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "eaf2f1ad-5d6c-43bb-a491-d931686f6948",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "const j = pm.response.json();",
+                "pm.test('Balance = 700', () => pm.expect(+j.balance).to.eql(700));"
+              ],
+              "_lastExecutionId": "55e883d1-1436-4633-a836-cb2abcaccf39"
+            }
+          }
+        ]
+      },
+      {
+        "id": "d0a32f89-c9d6-40ca-bc8e-e52eaf44d7e8",
+        "name": "07. Poll notifications for HAPPY",
+        "request": {
+          "url": {
+            "path": [
+              "notifications"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            }
+          ],
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "78027caa-9aa1-4eb6-86cc-abd96c03ca31",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "const attempt = +(pm.collectionVariables.get('notif1PollAttempt') || 0);",
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "const arr = pm.response.json();",
+                "const happy = arr.find(n => n.type === 'HAPPY' && n.orderId == pm.collectionVariables.get('order1Id'));",
+                "if (!happy && attempt < 20) {",
+                "  pm.collectionVariables.set('notif1PollAttempt', attempt + 1);",
+                "  console.log('HAPPY not found, retrying... attempt=' + (attempt+1));",
+                "  setTimeout(() => {}, 500);",
+                "  postman.setNextRequest('07. Poll notifications for HAPPY');",
+                "} else {",
+                "  pm.collectionVariables.set('notif1PollAttempt', 0);",
+                "  pm.test('HAPPY notification exists for order1', () => pm.expect(happy).to.exist);",
+                "}"
+              ],
+              "_lastExecutionId": "d6aeba13-013e-4188-9639-7658ac52b229"
+            }
+          }
+        ]
+      },
+      {
+        "id": "dba2fe9c-7330-4478-9d1d-ca4ffb68d9a1",
+        "name": "08. Create order 5000",
+        "request": {
+          "url": {
+            "path": [
+              "orders"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"price\": 5000\n}"
+          }
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "17565391-ea15-438b-9574-1bbfa052039c",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "pm.test('Status 202', () => pm.response.to.have.status(202));",
+                "const j = pm.response.json();",
+                "pm.test('Order NEW', () => pm.expect(j.status).to.eql('NEW'));",
+                "pm.collectionVariables.set('order2Id', j.orderId);"
+              ],
+              "_lastExecutionId": "e5a3a045-f088-4135-951e-ef710e674c4c"
+            }
+          }
+        ]
+      },
+      {
+        "id": "f5fc6298-624f-4f7d-bcd1-c1b9f53b984f",
+        "name": "09. Poll order2 until FAILED",
+        "request": {
+          "url": {
+            "path": [
+              "orders",
+              "{{order2Id}}"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            }
+          ],
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "f867f461-ce25-4fd7-b25b-faefac542a8c",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "const attempt = +(pm.collectionVariables.get('order2PollAttempt') || 0);",
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "const j = pm.response.json();",
+                "if (j.status === 'NEW' && attempt < 20) {",
+                "  pm.collectionVariables.set('order2PollAttempt', attempt + 1);",
+                "  console.log('Still NEW, retrying... attempt=' + (attempt+1));",
+                "  setTimeout(() => {}, 500);",
+                "  postman.setNextRequest('09. Poll order2 until FAILED');",
+                "} else {",
+                "  pm.collectionVariables.set('order2PollAttempt', 0);",
+                "  pm.test('Order2 FAILED', () => pm.expect(j.status).to.eql('FAILED'));",
+                "}"
+              ],
+              "_lastExecutionId": "47dce6e4-b056-4bd8-9a5d-ee5fe6ccc88a"
+            }
+          }
+        ]
+      },
+      {
+        "id": "1e1eaaad-02e2-409a-bf83-93267cfc54b4",
+        "name": "10. Balance still 700",
+        "request": {
+          "url": {
+            "path": [
+              "billing",
+              "accounts",
+              "me"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            }
+          ],
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "40a131b0-67c5-490c-9048-0cf083d057d5",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "const j = pm.response.json();",
+                "pm.test('Balance still 700 (not charged for failed order)', () => pm.expect(+j.balance).to.eql(700));"
+              ],
+              "_lastExecutionId": "a3924cf8-780b-4c93-bbc5-fdca2c6f7648"
+            }
+          }
+        ]
+      },
+      {
+        "id": "1d666a3d-2931-4dc4-99fc-3c99646dcc95",
+        "name": "11. Poll notifications for ANGRY",
+        "request": {
+          "url": {
+            "path": [
+              "notifications"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{token}}"
+            }
+          ],
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "567a32ec-0bd3-4ddc-a324-b87f6681ed55",
+              "type": "text/javascript",
+              "exec": [
+                "console.log('=== REQUEST ===');",
+                "console.log(pm.request.method, pm.request.url.toString());",
+                "console.log('=== RESPONSE ===');",
+                "console.log('STATUS:', pm.response.code);",
+                "console.log('BODY:', pm.response.text());",
+                "",
+                "const attempt = +(pm.collectionVariables.get('notif2PollAttempt') || 0);",
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "const arr = pm.response.json();",
+                "const angry = arr.find(n => n.type === 'ANGRY' && n.orderId == pm.collectionVariables.get('order2Id'));",
+                "if (!angry && attempt < 20) {",
+                "  pm.collectionVariables.set('notif2PollAttempt', attempt + 1);",
+                "  console.log('ANGRY not found, retrying... attempt=' + (attempt+1));",
+                "  setTimeout(() => {}, 500);",
+                "  postman.setNextRequest('11. Poll notifications for ANGRY');",
+                "} else {",
+                "  pm.collectionVariables.set('notif2PollAttempt', 0);",
+                "  pm.test('ANGRY notification exists for order2', () => pm.expect(angry).to.exist);",
+                "}"
+              ],
+              "_lastExecutionId": "5038f577-fae8-4f97-856d-25f7b60e3bc8"
+            }
+          }
+        ]
+      }
+    ],
+    "event": [],
+    "variable": [
+      {
+        "type": "any",
+        "value": "http://arch.homework",
+        "key": "baseUrl"
+      }
+    ],
+    "info": {
+      "_postman_id": "3ae2f66e-bca1-47c7-9171-47a0f67a96e3",
+      "name": "Shop Stream App (Event Collaboration)",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      "description": {
+        "content": "End-to-end сценарий ДЗ: регистрация → deposit → заказ (успех и неуспех) → проверка баланса и уведомлений. Использует {{baseUrl}} = http://arch.homework и polling для асинхронных событий Kafka.",
+        "type": "text/plain"
+      }
+    }
+  },
+  "environment": {
+    "id": "f20eaddf-7743-4fef-a4ae-456a1a146b38",
+    "values": [
+      {
+        "type": "any",
+        "value": "http://localhost:8080",
+        "key": "baseUrl"
+      }
+    ]
+  },
+  "globals": {
+    "id": "59b01d06-c147-4a26-aabb-3dd0e4efb46d",
+    "values": []
+  },
+  "run": {
+    "stats": {
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {
+        "total": 11,
+        "pending": 0,
+        "failed": 0
+      },
+      "scripts": {
+        "total": 12,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 11,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 11,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 11,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 22,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 11,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseAverage": 23.727272727272727,
+      "responseMin": 10,
+      "responseMax": 111,
+      "responseSd": 28.04571239015109,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1794498386430,
+      "completed": 1794498388045
+    },
+    "executions": [
+      {
+        "cursor": {
+          "position": 0,
+          "iteration": 0,
+          "length": 11,
+          "cycles": 1,
+          "empty": false,
+          "eof": false,
+          "bof": true,
+          "cr": false,
+          "ref": "afcc1a6c-c2fd-40e2-8a27-1ce32d252804",
+          "httpRequestId": "9a7e7636-15da-4fe9-ab19-6cd40488b067"
+        },
+        "item": {
+          "id": "43046fd2-35be-428d-ab50-02c1e681686b",
+          "name": "01. Register user",
+          "request": {
+            "url": {
+              "path": [
+                "auth",
+                "register"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{name}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "2bb45d01-3900-4ad8-a480-3cdfeee5a41d",
+                "type": "text/javascript",
+                "exec": [
+                  "const rnd = Math.random().toString(36).substring(2, 10);",
+                  "pm.collectionVariables.set('email', `user_${rnd}@example.com`);",
+                  "pm.collectionVariables.set('password', 'password123');",
+                  "pm.collectionVariables.set('name', `User ${rnd}`);"
+                ],
+                "_lastExecutionId": "db3fba30-827c-42c0-9c05-8bb2a80e0808"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "c728ea3e-a771-4bd8-9c49-28e7273b1114",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('Has id and token', () => {",
+                  "  pm.expect(j.id).to.be.a('number');",
+                  "  pm.expect(j.token).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('userId', j.id);",
+                  "pm.collectionVariables.set('token', j.token);"
+                ],
+                "_lastExecutionId": "c07a65c9-fab3-42fd-b235-da038ea8ea85"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "auth",
+              "register"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "ec888e59-be3f-4340-9dbe-13d0bddb470d",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "98",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"name\": \"User zxskyb99\",\n  \"email\": \"user_zxskyb99@example.com\",\n  \"password\": \"password123\"\n}"
+          }
+        },
+        "response": {
+          "id": "9fb7cddd-4a33-4b0a-a914-167d9b84f23d",
+          "status": "Created",
+          "code": 201,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:26 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              105,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              116,
+              111,
+              107,
+              101,
+              110,
+              34,
+              58,
+              34,
+              101,
+              121,
+              74,
+              104,
+              98,
+              71,
+              99,
+              105,
+              79,
+              105,
+              74,
+              73,
+              85,
+              122,
+              73,
+              49,
+              78,
+              105,
+              74,
+              57,
+              46,
+              101,
+              121,
+              74,
+              122,
+              100,
+              87,
+              73,
+              105,
+              79,
+              105,
+              73,
+              49,
+              73,
+              105,
+              119,
+              105,
+              90,
+              87,
+              49,
+              104,
+              97,
+              87,
+              119,
+              105,
+              79,
+              105,
+              74,
+              49,
+              99,
+              50,
+              86,
+              121,
+              88,
+              51,
+              112,
+              52,
+              99,
+              50,
+              116,
+              53,
+              89,
+              106,
+              107,
+              53,
+              81,
+              71,
+              86,
+              52,
+              89,
+              87,
+              49,
+              119,
+              98,
+              71,
+              85,
+              117,
+              89,
+              50,
+              57,
+              116,
+              73,
+              105,
+              119,
+              105,
+              97,
+              87,
+              70,
+              48,
+              73,
+              106,
+              111,
+              120,
+              78,
+              122,
+              107,
+              48,
+              78,
+              68,
+              107,
+              52,
+              77,
+              122,
+              103,
+              50,
+              76,
+              67,
+              74,
+              108,
+              101,
+              72,
+              65,
+              105,
+              79,
+              106,
+              69,
+              51,
+              79,
+              84,
+              81,
+              49,
+              77,
+              68,
+              69,
+              53,
+              79,
+              68,
+              90,
+              57,
+              46,
+              48,
+              104,
+              51,
+              88,
+              83,
+              83,
+              84,
+              107,
+              119,
+              95,
+              78,
+              67,
+              99,
+              113,
+              69,
+              71,
+              72,
+              114,
+              68,
+              113,
+              100,
+              120,
+              52,
+              84,
+              110,
+              115,
+              114,
+              54,
+              69,
+              102,
+              107,
+              121,
+              48,
+              70,
+              111,
+              49,
+              51,
+              69,
+              109,
+              71,
+              109,
+              115,
+              103,
+              34,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 111,
+          "responseSize": 192
+        },
+        "id": "43046fd2-35be-428d-ab50-02c1e681686b",
+        "assertions": [
+          {
+            "assertion": "Status 201",
+            "skipped": false
+          },
+          {
+            "assertion": "Has id and token",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "7902f74c-0fd0-4b84-a083-418ec25718e2",
+          "length": 11,
+          "cycles": 1,
+          "position": 1,
+          "iteration": 0,
+          "httpRequestId": "e5f5ad7e-755f-45da-acd7-b77f6277ed34"
+        },
+        "item": {
+          "id": "e34a2f8e-e4b5-4e2a-bba8-b5d750d4ce5b",
+          "name": "02. Poll account creation",
+          "request": {
+            "url": {
+              "path": [
+                "billing",
+                "accounts",
+                "me"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "a74df4a8-540d-4a88-b692-d659145fa62e",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "const attempt = +(pm.collectionVariables.get('accountPollAttempt') || 0);",
+                  "const status = pm.response.code;",
+                  "if (status === 500 || status === 404) {",
+                  "  if (attempt < 10) {",
+                  "    pm.collectionVariables.set('accountPollAttempt', attempt + 1);",
+                  "    console.log('Account not ready yet, retrying in 500ms... attempt=' + (attempt+1));",
+                  "    setTimeout(() => {}, 500);",
+                  "    postman.setNextRequest('02. Poll account creation');",
+                  "  } else {",
+                  "    pm.test('Account created within 5s', () => { throw new Error('Account not created'); });",
+                  "  }",
+                  "} else {",
+                  "  pm.collectionVariables.set('accountPollAttempt', 0);",
+                  "  pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "  const j = pm.response.json();",
+                  "  pm.test('Balance is 0', () => pm.expect(+j.balance).to.eql(0));",
+                  "  pm.collectionVariables.set('accountId', j.accountId);",
+                  "}"
+                ],
+                "_lastExecutionId": "460b6aef-feed-4856-b453-7c7fd4de286a"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "billing",
+              "accounts",
+              "me"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "51ce2e42-4bcd-4e06-8b46-0e382842e642",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "35f6e44e-50c1-4ef8-bdf2-34542a51180e",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:26 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              97,
+              99,
+              99,
+              111,
+              117,
+              110,
+              116,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              98,
+              97,
+              108,
+              97,
+              110,
+              99,
+              101,
+              34,
+              58,
+              48,
+              46,
+              48,
+              48,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 12,
+          "responseSize": 41
+        },
+        "id": "e34a2f8e-e4b5-4e2a-bba8-b5d750d4ce5b",
+        "assertions": [
+          {
+            "assertion": "Status 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Balance is 0",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "00888b86-2d3b-4b62-9421-3050360109fc",
+          "length": 11,
+          "cycles": 1,
+          "position": 2,
+          "iteration": 0,
+          "httpRequestId": "e2995570-d6ca-4503-b7fc-e4ddfd39af04"
+        },
+        "item": {
+          "id": "6807ae93-407f-413c-9087-2018fc2a524f",
+          "name": "03. Deposit 1000",
+          "request": {
+            "url": {
+              "path": [
+                "billing",
+                "accounts",
+                "me",
+                "deposit"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "df5f4fcc-7aba-4e83-85ef-dfc3cd4c9142",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Balance = 1000', () => pm.expect(+j.balance).to.eql(1000));"
+                ],
+                "_lastExecutionId": "ff6e0a33-a781-4c19-afe3-52fbb23a08e2"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "billing",
+              "accounts",
+              "me",
+              "deposit"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "c94f4a5f-3f3a-4175-b678-d699b2ddc6ef",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "20",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"amount\": 1000\n}"
+          }
+        },
+        "response": {
+          "id": "fb4f6223-cc75-4652-a601-9a6231dbc241",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:26 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              97,
+              99,
+              99,
+              111,
+              117,
+              110,
+              116,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              98,
+              97,
+              108,
+              97,
+              110,
+              99,
+              101,
+              34,
+              58,
+              49,
+              48,
+              48,
+              48,
+              46,
+              48,
+              48,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 25,
+          "responseSize": 44
+        },
+        "id": "6807ae93-407f-413c-9087-2018fc2a524f",
+        "assertions": [
+          {
+            "assertion": "Status 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Balance = 1000",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "279694bd-aa2c-4a4f-b51f-cdaca006b8f5",
+          "length": 11,
+          "cycles": 1,
+          "position": 3,
+          "iteration": 0,
+          "httpRequestId": "0974f817-512c-4d02-ab1a-2e55d1c83aac"
+        },
+        "item": {
+          "id": "242a01e2-a085-4aed-bf58-da5796439e1b",
+          "name": "04. Create order 300",
+          "request": {
+            "url": {
+              "path": [
+                "orders"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 300\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "14b0a5b4-0e40-475f-b589-f83009b4e099",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "pm.test('Status 202', () => pm.response.to.have.status(202));",
+                  "const j = pm.response.json();",
+                  "pm.test('Order NEW', () => pm.expect(j.status).to.eql('NEW'));",
+                  "pm.collectionVariables.set('order1Id', j.orderId);"
+                ],
+                "_lastExecutionId": "3c972b8f-417b-48f6-8b26-a38eee55d608"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "orders"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "199a3870-ccb8-40b5-ad52-f1c0278b22d4",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "18",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"price\": 300\n}"
+          }
+        },
+        "response": {
+          "id": "72c96dcb-c4b3-4231-a5f0-8ff320e7e4e0",
+          "status": "Accepted",
+          "code": 202,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:27 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              111,
+              114,
+              100,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              112,
+              114,
+              105,
+              99,
+              101,
+              34,
+              58,
+              51,
+              48,
+              48,
+              44,
+              34,
+              115,
+              116,
+              97,
+              116,
+              117,
+              115,
+              34,
+              58,
+              34,
+              78,
+              69,
+              87,
+              34,
+              44,
+              34,
+              99,
+              114,
+              101,
+              97,
+              116,
+              101,
+              100,
+              65,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              49,
+              45,
+              49,
+              50,
+              84,
+              49,
+              53,
+              58,
+              52,
+              54,
+              58,
+              50,
+              55,
+              46,
+              48,
+              56,
+              56,
+              52,
+              50,
+              55,
+              51,
+              57,
+              53,
+              90,
+              34,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 25,
+          "responseSize": 96
+        },
+        "id": "242a01e2-a085-4aed-bf58-da5796439e1b",
+        "assertions": [
+          {
+            "assertion": "Status 202",
+            "skipped": false
+          },
+          {
+            "assertion": "Order NEW",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "a6efd0a0-4f02-46e6-95fb-3a8665b9fac7",
+          "length": 11,
+          "cycles": 1,
+          "position": 4,
+          "iteration": 0,
+          "httpRequestId": "b14a9a6a-367a-424c-8456-c571f09c7d52"
+        },
+        "item": {
+          "id": "924c2b76-24e6-40f9-b398-82cb52e8903c",
+          "name": "05. Poll order1 until PAID",
+          "request": {
+            "url": {
+              "path": [
+                "orders",
+                "{{order1Id}}"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "15149888-d5e6-4f84-bf10-f9352f36cdb3",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "const attempt = +(pm.collectionVariables.get('order1PollAttempt') || 0);",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j.status === 'NEW' && attempt < 20) {",
+                  "  pm.collectionVariables.set('order1PollAttempt', attempt + 1);",
+                  "  console.log('Still NEW, retrying... attempt=' + (attempt+1));",
+                  "  setTimeout(() => {}, 500);",
+                  "  postman.setNextRequest('05. Poll order1 until PAID');",
+                  "} else {",
+                  "  pm.collectionVariables.set('order1PollAttempt', 0);",
+                  "  pm.test('Order1 PAID', () => pm.expect(j.status).to.eql('PAID'));",
+                  "}"
+                ],
+                "_lastExecutionId": "4bedc536-f237-4280-ab83-594fe79d39b2"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "orders",
+              "3"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "2f7b1b18-5b81-4e78-bc95-5131ef799f16",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "fd7d9c54-72f3-4542-be5c-0aa923343e09",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:27 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              111,
+              114,
+              100,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              112,
+              114,
+              105,
+              99,
+              101,
+              34,
+              58,
+              51,
+              48,
+              48,
+              46,
+              48,
+              48,
+              44,
+              34,
+              115,
+              116,
+              97,
+              116,
+              117,
+              115,
+              34,
+              58,
+              34,
+              80,
+              65,
+              73,
+              68,
+              34,
+              44,
+              34,
+              99,
+              114,
+              101,
+              97,
+              116,
+              101,
+              100,
+              65,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              49,
+              45,
+              49,
+              50,
+              84,
+              49,
+              53,
+              58,
+              52,
+              54,
+              58,
+              50,
+              55,
+              46,
+              48,
+              56,
+              56,
+              52,
+              50,
+              55,
+              90,
+              34,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 16,
+          "responseSize": 97
+        },
+        "id": "924c2b76-24e6-40f9-b398-82cb52e8903c",
+        "assertions": [
+          {
+            "assertion": "Status 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Order1 PAID",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "2a033cde-d370-4502-8ad6-138777556d41",
+          "length": 11,
+          "cycles": 1,
+          "position": 5,
+          "iteration": 0,
+          "httpRequestId": "449afdb9-3b63-4837-aaaa-7836659ae43e"
+        },
+        "item": {
+          "id": "5c3ea723-ded9-4823-80fc-331c6e2171cd",
+          "name": "06. Check balance = 700",
+          "request": {
+            "url": {
+              "path": [
+                "billing",
+                "accounts",
+                "me"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "eaf2f1ad-5d6c-43bb-a491-d931686f6948",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Balance = 700', () => pm.expect(+j.balance).to.eql(700));"
+                ],
+                "_lastExecutionId": "55e883d1-1436-4633-a836-cb2abcaccf39"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "billing",
+              "accounts",
+              "me"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "feedbc42-d38d-4947-9c31-300f3cd865b1",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "a7995076-bf4b-4c8f-8fb6-e1b2f61a5fe5",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:27 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              97,
+              99,
+              99,
+              111,
+              117,
+              110,
+              116,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              98,
+              97,
+              108,
+              97,
+              110,
+              99,
+              101,
+              34,
+              58,
+              55,
+              48,
+              48,
+              46,
+              48,
+              48,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 12,
+          "responseSize": 43
+        },
+        "id": "5c3ea723-ded9-4823-80fc-331c6e2171cd",
+        "assertions": [
+          {
+            "assertion": "Status 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Balance = 700",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "f1354256-0a3c-4f05-b2ec-c5617ba011af",
+          "length": 11,
+          "cycles": 1,
+          "position": 6,
+          "iteration": 0,
+          "httpRequestId": "67af078a-e1b9-4854-8ace-0e490f515f5b"
+        },
+        "item": {
+          "id": "d0a32f89-c9d6-40ca-bc8e-e52eaf44d7e8",
+          "name": "07. Poll notifications for HAPPY",
+          "request": {
+            "url": {
+              "path": [
+                "notifications"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "78027caa-9aa1-4eb6-86cc-abd96c03ca31",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "const attempt = +(pm.collectionVariables.get('notif1PollAttempt') || 0);",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const arr = pm.response.json();",
+                  "const happy = arr.find(n => n.type === 'HAPPY' && n.orderId == pm.collectionVariables.get('order1Id'));",
+                  "if (!happy && attempt < 20) {",
+                  "  pm.collectionVariables.set('notif1PollAttempt', attempt + 1);",
+                  "  console.log('HAPPY not found, retrying... attempt=' + (attempt+1));",
+                  "  setTimeout(() => {}, 500);",
+                  "  postman.setNextRequest('07. Poll notifications for HAPPY');",
+                  "} else {",
+                  "  pm.collectionVariables.set('notif1PollAttempt', 0);",
+                  "  pm.test('HAPPY notification exists for order1', () => pm.expect(happy).to.exist);",
+                  "}"
+                ],
+                "_lastExecutionId": "d6aeba13-013e-4188-9639-7658ac52b229"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "notifications"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "67ccdc24-8ce5-483b-8d05-3e281673e002",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "d1d8adbc-5d44-4abe-9612-c3a6e0dba528",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:27 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              91,
+              123,
+              34,
+              105,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              111,
+              114,
+              100,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              116,
+              121,
+              112,
+              101,
+              34,
+              58,
+              34,
+              72,
+              65,
+              80,
+              80,
+              89,
+              34,
+              44,
+              34,
+              115,
+              117,
+              98,
+              106,
+              101,
+              99,
+              116,
+              34,
+              58,
+              34,
+              208,
+              151,
+              208,
+              176,
+              208,
+              186,
+              208,
+              176,
+              208,
+              183,
+              32,
+              35,
+              51,
+              32,
+              208,
+              190,
+              208,
+              191,
+              208,
+              187,
+              208,
+              176,
+              209,
+              135,
+              208,
+              181,
+              208,
+              189,
+              34,
+              44,
+              34,
+              98,
+              111,
+              100,
+              121,
+              34,
+              58,
+              34,
+              208,
+              151,
+              208,
+              180,
+              209,
+              128,
+              208,
+              176,
+              208,
+              178,
+              209,
+              129,
+              209,
+              130,
+              208,
+              178,
+              209,
+              131,
+              208,
+              185,
+              209,
+              130,
+              208,
+              181,
+              33,
+              32,
+              208,
+              146,
+              208,
+              176,
+              209,
+              136,
+              32,
+              208,
+              183,
+              208,
+              176,
+              208,
+              186,
+              208,
+              176,
+              208,
+              183,
+              32,
+              35,
+              51,
+              32,
+              208,
+              189,
+              208,
+              176,
+              32,
+              209,
+              129,
+              209,
+              131,
+              208,
+              188,
+              208,
+              188,
+              209,
+              131,
+              32,
+              51,
+              48,
+              48,
+              46,
+              48,
+              48,
+              32,
+              209,
+              131,
+              209,
+              129,
+              208,
+              191,
+              208,
+              181,
+              209,
+              136,
+              208,
+              189,
+              208,
+              190,
+              32,
+              208,
+              190,
+              208,
+              191,
+              208,
+              187,
+              208,
+              176,
+              209,
+              135,
+              208,
+              181,
+              208,
+              189,
+              46,
+              32,
+              208,
+              159,
+              208,
+              184,
+              209,
+              129,
+              209,
+              140,
+              208,
+              188,
+              208,
+              190,
+              32,
+              209,
+              129,
+              209,
+              135,
+              208,
+              176,
+              209,
+              129,
+              209,
+              130,
+              209,
+              140,
+              209,
+              143,
+              32,
+              208,
+              190,
+              209,
+              130,
+              208,
+              191,
+              209,
+              128,
+              208,
+              176,
+              208,
+              178,
+              208,
+              187,
+              208,
+              181,
+              208,
+              189,
+              208,
+              190,
+              32,
+              208,
+              189,
+              208,
+              176,
+              32,
+              117,
+              115,
+              101,
+              114,
+              95,
+              122,
+              120,
+              115,
+              107,
+              121,
+              98,
+              57,
+              57,
+              64,
+              101,
+              120,
+              97,
+              109,
+              112,
+              108,
+              101,
+              46,
+              99,
+              111,
+              109,
+              46,
+              34,
+              44,
+              34,
+              99,
+              114,
+              101,
+              97,
+              116,
+              101,
+              100,
+              65,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              49,
+              45,
+              49,
+              50,
+              84,
+              49,
+              53,
+              58,
+              52,
+              54,
+              58,
+              50,
+              55,
+              46,
+              49,
+              49,
+              51,
+              49,
+              53,
+              48,
+              90,
+              34,
+              125,
+              93
+            ]
+          },
+          "cookie": [],
+          "responseTime": 14,
+          "responseSize": 322
+        },
+        "id": "d0a32f89-c9d6-40ca-bc8e-e52eaf44d7e8",
+        "assertions": [
+          {
+            "assertion": "Status 200",
+            "skipped": false
+          },
+          {
+            "assertion": "HAPPY notification exists for order1",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "f6b105a0-57df-446f-94f9-5a5d76734dc9",
+          "length": 11,
+          "cycles": 1,
+          "position": 7,
+          "iteration": 0,
+          "httpRequestId": "76cb8794-96d8-463f-94fb-84a6e5009dd8"
+        },
+        "item": {
+          "id": "dba2fe9c-7330-4478-9d1d-ca4ffb68d9a1",
+          "name": "08. Create order 5000",
+          "request": {
+            "url": {
+              "path": [
+                "orders"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 5000\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "17565391-ea15-438b-9574-1bbfa052039c",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "if (pm.request.body && pm.request.body.raw) console.log('BODY:', pm.request.body.raw);",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "pm.test('Status 202', () => pm.response.to.have.status(202));",
+                  "const j = pm.response.json();",
+                  "pm.test('Order NEW', () => pm.expect(j.status).to.eql('NEW'));",
+                  "pm.collectionVariables.set('order2Id', j.orderId);"
+                ],
+                "_lastExecutionId": "e5a3a045-f088-4135-951e-ef710e674c4c"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "orders"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "35696f93-421d-4ab8-835a-902211cac8ef",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "19",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"price\": 5000\n}"
+          }
+        },
+        "response": {
+          "id": "089ac85d-8900-4605-8153-9b0d221ecb21",
+          "status": "Accepted",
+          "code": 202,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:27 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              111,
+              114,
+              100,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              52,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              112,
+              114,
+              105,
+              99,
+              101,
+              34,
+              58,
+              53,
+              48,
+              48,
+              48,
+              44,
+              34,
+              115,
+              116,
+              97,
+              116,
+              117,
+              115,
+              34,
+              58,
+              34,
+              78,
+              69,
+              87,
+              34,
+              44,
+              34,
+              99,
+              114,
+              101,
+              97,
+              116,
+              101,
+              100,
+              65,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              49,
+              45,
+              49,
+              50,
+              84,
+              49,
+              53,
+              58,
+              52,
+              54,
+              58,
+              50,
+              55,
+              46,
+              54,
+              51,
+              49,
+              54,
+              57,
+              53,
+              48,
+              55,
+              54,
+              90,
+              34,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 13,
+          "responseSize": 97
+        },
+        "id": "dba2fe9c-7330-4478-9d1d-ca4ffb68d9a1",
+        "assertions": [
+          {
+            "assertion": "Status 202",
+            "skipped": false
+          },
+          {
+            "assertion": "Order NEW",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "0017a8b3-424f-401f-8af5-0763cd822c39",
+          "length": 11,
+          "cycles": 1,
+          "position": 8,
+          "iteration": 0,
+          "httpRequestId": "007e995b-d9ea-45db-9f48-85a1c95792d1"
+        },
+        "item": {
+          "id": "f5fc6298-624f-4f7d-bcd1-c1b9f53b984f",
+          "name": "09. Poll order2 until FAILED",
+          "request": {
+            "url": {
+              "path": [
+                "orders",
+                "{{order2Id}}"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "f867f461-ce25-4fd7-b25b-faefac542a8c",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "const attempt = +(pm.collectionVariables.get('order2PollAttempt') || 0);",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j.status === 'NEW' && attempt < 20) {",
+                  "  pm.collectionVariables.set('order2PollAttempt', attempt + 1);",
+                  "  console.log('Still NEW, retrying... attempt=' + (attempt+1));",
+                  "  setTimeout(() => {}, 500);",
+                  "  postman.setNextRequest('09. Poll order2 until FAILED');",
+                  "} else {",
+                  "  pm.collectionVariables.set('order2PollAttempt', 0);",
+                  "  pm.test('Order2 FAILED', () => pm.expect(j.status).to.eql('FAILED'));",
+                  "}"
+                ],
+                "_lastExecutionId": "47dce6e4-b056-4bd8-9a5d-ee5fe6ccc88a"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "orders",
+              "4"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "21f03c75-082a-4cc6-a3a9-30f40044390b",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "069e7c91-33dd-457a-b666-55be98308894",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:27 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              111,
+              114,
+              100,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              52,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              112,
+              114,
+              105,
+              99,
+              101,
+              34,
+              58,
+              53,
+              48,
+              48,
+              48,
+              46,
+              48,
+              48,
+              44,
+              34,
+              115,
+              116,
+              97,
+              116,
+              117,
+              115,
+              34,
+              58,
+              34,
+              70,
+              65,
+              73,
+              76,
+              69,
+              68,
+              34,
+              44,
+              34,
+              99,
+              114,
+              101,
+              97,
+              116,
+              101,
+              100,
+              65,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              49,
+              45,
+              49,
+              50,
+              84,
+              49,
+              53,
+              58,
+              52,
+              54,
+              58,
+              50,
+              55,
+              46,
+              54,
+              51,
+              49,
+              54,
+              57,
+              53,
+              90,
+              34,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 12,
+          "responseSize": 100
+        },
+        "id": "f5fc6298-624f-4f7d-bcd1-c1b9f53b984f",
+        "assertions": [
+          {
+            "assertion": "Status 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Order2 FAILED",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "3fcde44d-12b6-47dd-b19c-90d9d641877d",
+          "length": 11,
+          "cycles": 1,
+          "position": 9,
+          "iteration": 0,
+          "httpRequestId": "f734eac6-ea26-4178-bbc1-baa2eb83f6de"
+        },
+        "item": {
+          "id": "1e1eaaad-02e2-409a-bf83-93267cfc54b4",
+          "name": "10. Balance still 700",
+          "request": {
+            "url": {
+              "path": [
+                "billing",
+                "accounts",
+                "me"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "40a131b0-67c5-490c-9048-0cf083d057d5",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Balance still 700 (not charged for failed order)', () => pm.expect(+j.balance).to.eql(700));"
+                ],
+                "_lastExecutionId": "a3924cf8-780b-4c93-bbc5-fdca2c6f7648"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "billing",
+              "accounts",
+              "me"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "042eafbb-7e3a-4beb-866a-042f1a42d2ff",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "10b031aa-997d-4beb-af2d-dc511e929886",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:27 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              97,
+              99,
+              99,
+              111,
+              117,
+              110,
+              116,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              98,
+              97,
+              108,
+              97,
+              110,
+              99,
+              101,
+              34,
+              58,
+              55,
+              48,
+              48,
+              46,
+              48,
+              48,
+              125
+            ]
+          },
+          "cookie": [],
+          "responseTime": 10,
+          "responseSize": 43
+        },
+        "id": "1e1eaaad-02e2-409a-bf83-93267cfc54b4",
+        "assertions": [
+          {
+            "assertion": "Status 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Balance still 700 (not charged for failed order)",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "bf406916-226c-4e14-8b14-205b4bc227fc",
+          "length": 11,
+          "cycles": 1,
+          "position": 10,
+          "iteration": 0,
+          "httpRequestId": "5586101d-d78e-4c88-b312-35aeb0edc73a"
+        },
+        "item": {
+          "id": "1d666a3d-2931-4dc4-99fc-3c99646dcc95",
+          "name": "11. Poll notifications for ANGRY",
+          "request": {
+            "url": {
+              "path": [
+                "notifications"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "567a32ec-0bd3-4ddc-a324-b87f6681ed55",
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('=== REQUEST ===');",
+                  "console.log(pm.request.method, pm.request.url.toString());",
+                  "console.log('=== RESPONSE ===');",
+                  "console.log('STATUS:', pm.response.code);",
+                  "console.log('BODY:', pm.response.text());",
+                  "",
+                  "const attempt = +(pm.collectionVariables.get('notif2PollAttempt') || 0);",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const arr = pm.response.json();",
+                  "const angry = arr.find(n => n.type === 'ANGRY' && n.orderId == pm.collectionVariables.get('order2Id'));",
+                  "if (!angry && attempt < 20) {",
+                  "  pm.collectionVariables.set('notif2PollAttempt', attempt + 1);",
+                  "  console.log('ANGRY not found, retrying... attempt=' + (attempt+1));",
+                  "  setTimeout(() => {}, 500);",
+                  "  postman.setNextRequest('11. Poll notifications for ANGRY');",
+                  "} else {",
+                  "  pm.collectionVariables.set('notif2PollAttempt', 0);",
+                  "  pm.test('ANGRY notification exists for order2', () => pm.expect(angry).to.exist);",
+                  "}"
+                ],
+                "_lastExecutionId": "5038f577-fae8-4f97-856d-25f7b60e3bc8"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "notifications"
+            ],
+            "host": [
+              "localhost"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1IiwiZW1haWwiOiJ1c2VyX3p4c2t5Yjk5QGV4YW1wbGUuY29tIiwiaWF0IjoxNzk0NDk4Mzg2LCJleHAiOjE3OTQ1MDE5ODZ9.0h3XSSTkw_NCcqEGHrDqdx4Tnsr6Efky0Fo13EmGmsg"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.1",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "025c1039-7ded-488b-bc0f-d4faed7f9324",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "localhost:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "eb79e702-1697-4ee2-8adf-f387997af62e",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Server",
+              "value": "nginx/1.31.8"
+            },
+            {
+              "key": "Date",
+              "value": "Thu, 12 Nov 2026 15:46:28 GMT"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Transfer-Encoding",
+              "value": "chunked"
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "key": "Vary",
+              "value": "Origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Method"
+            },
+            {
+              "key": "Vary",
+              "value": "Access-Control-Request-Headers"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-XSS-Protection",
+              "value": "0"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "key": "Expires",
+              "value": "0"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              91,
+              123,
+              34,
+              105,
+              100,
+              34,
+              58,
+              52,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              111,
+              114,
+              100,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              52,
+              44,
+              34,
+              116,
+              121,
+              112,
+              101,
+              34,
+              58,
+              34,
+              65,
+              78,
+              71,
+              82,
+              89,
+              34,
+              44,
+              34,
+              115,
+              117,
+              98,
+              106,
+              101,
+              99,
+              116,
+              34,
+              58,
+              34,
+              208,
+              151,
+              208,
+              176,
+              208,
+              186,
+              208,
+              176,
+              208,
+              183,
+              32,
+              35,
+              52,
+              32,
+              208,
+              190,
+              209,
+              130,
+              208,
+              186,
+              208,
+              187,
+              208,
+              190,
+              208,
+              189,
+              209,
+              145,
+              208,
+              189,
+              34,
+              44,
+              34,
+              98,
+              111,
+              100,
+              121,
+              34,
+              58,
+              34,
+              208,
+              154,
+              32,
+              209,
+              129,
+              208,
+              190,
+              208,
+              182,
+              208,
+              176,
+              208,
+              187,
+              208,
+              181,
+              208,
+              189,
+              208,
+              184,
+              209,
+              142,
+              44,
+              32,
+              208,
+              178,
+              208,
+              176,
+              209,
+              136,
+              32,
+              208,
+              183,
+              208,
+              176,
+              208,
+              186,
+              208,
+              176,
+              208,
+              183,
+              32,
+              35,
+              52,
+              32,
+              208,
+              189,
+              208,
+              176,
+              32,
+              209,
+              129,
+              209,
+              131,
+              208,
+              188,
+              208,
+              188,
+              209,
+              131,
+              32,
+              53,
+              48,
+              48,
+              48,
+              46,
+              48,
+              48,
+              32,
+              208,
+              189,
+              208,
+              181,
+              32,
+              208,
+              188,
+              208,
+              190,
+              208,
+              182,
+              208,
+              181,
+              209,
+              130,
+              32,
+              208,
+              177,
+              209,
+              139,
+              209,
+              130,
+              209,
+              140,
+              32,
+              208,
+              178,
+              209,
+              139,
+              208,
+              191,
+              208,
+              190,
+              208,
+              187,
+              208,
+              189,
+              208,
+              181,
+              208,
+              189,
+              46,
+              32,
+              208,
+              159,
+              209,
+              128,
+              208,
+              184,
+              209,
+              135,
+              208,
+              184,
+              208,
+              189,
+              208,
+              176,
+              58,
+              32,
+              73,
+              78,
+              83,
+              85,
+              70,
+              70,
+              73,
+              67,
+              73,
+              69,
+              78,
+              84,
+              95,
+              70,
+              85,
+              78,
+              68,
+              83,
+              46,
+              32,
+              208,
+              159,
+              208,
+              184,
+              209,
+              129,
+              209,
+              140,
+              208,
+              188,
+              208,
+              190,
+              32,
+              208,
+              179,
+              208,
+              190,
+              209,
+              128,
+              209,
+              143,
+              32,
+              208,
+              190,
+              209,
+              130,
+              208,
+              191,
+              209,
+              128,
+              208,
+              176,
+              208,
+              178,
+              208,
+              187,
+              208,
+              181,
+              208,
+              189,
+              208,
+              190,
+              32,
+              208,
+              189,
+              208,
+              176,
+              32,
+              117,
+              115,
+              101,
+              114,
+              95,
+              122,
+              120,
+              115,
+              107,
+              121,
+              98,
+              57,
+              57,
+              64,
+              101,
+              120,
+              97,
+              109,
+              112,
+              108,
+              101,
+              46,
+              99,
+              111,
+              109,
+              46,
+              34,
+              44,
+              34,
+              99,
+              114,
+              101,
+              97,
+              116,
+              101,
+              100,
+              65,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              49,
+              45,
+              49,
+              50,
+              84,
+              49,
+              53,
+              58,
+              52,
+              54,
+              58,
+              50,
+              55,
+              46,
+              54,
+              54,
+              52,
+              48,
+              51,
+              51,
+              90,
+              34,
+              125,
+              44,
+              123,
+              34,
+              105,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              117,
+              115,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              53,
+              44,
+              34,
+              111,
+              114,
+              100,
+              101,
+              114,
+              73,
+              100,
+              34,
+              58,
+              51,
+              44,
+              34,
+              116,
+              121,
+              112,
+              101,
+              34,
+              58,
+              34,
+              72,
+              65,
+              80,
+              80,
+              89,
+              34,
+              44,
+              34,
+              115,
+              117,
+              98,
+              106,
+              101,
+              99,
+              116,
+              34,
+              58,
+              34,
+              208,
+              151,
+              208,
+              176,
+              208,
+              186,
+              208,
+              176,
+              208,
+              183,
+              32,
+              35,
+              51,
+              32,
+              208,
+              190,
+              208,
+              191,
+              208,
+              187,
+              208,
+              176,
+              209,
+              135,
+              208,
+              181,
+              208,
+              189,
+              34,
+              44,
+              34,
+              98,
+              111,
+              100,
+              121,
+              34,
+              58,
+              34,
+              208,
+              151,
+              208,
+              180,
+              209,
+              128,
+              208,
+              176,
+              208,
+              178,
+              209,
+              129,
+              209,
+              130,
+              208,
+              178,
+              209,
+              131,
+              208,
+              185,
+              209,
+              130,
+              208,
+              181,
+              33,
+              32,
+              208,
+              146,
+              208,
+              176,
+              209,
+              136,
+              32,
+              208,
+              183,
+              208,
+              176,
+              208,
+              186,
+              208,
+              176,
+              208,
+              183,
+              32,
+              35,
+              51,
+              32,
+              208,
+              189,
+              208,
+              176,
+              32,
+              209,
+              129,
+              209,
+              131,
+              208,
+              188,
+              208,
+              188,
+              209,
+              131,
+              32,
+              51,
+              48,
+              48,
+              46,
+              48,
+              48,
+              32,
+              209,
+              131,
+              209,
+              129,
+              208,
+              191,
+              208,
+              181,
+              209,
+              136,
+              208,
+              189,
+              208,
+              190,
+              32,
+              208,
+              190,
+              208,
+              191,
+              208,
+              187,
+              208,
+              176,
+              209,
+              135,
+              208,
+              181,
+              208,
+              189,
+              46,
+              32,
+              208,
+              159,
+              208,
+              184,
+              209,
+              129,
+              209,
+              140,
+              208,
+              188,
+              208,
+              190,
+              32,
+              209,
+              129,
+              209,
+              135,
+              208,
+              176,
+              209,
+              129,
+              209,
+              130,
+              209,
+              140,
+              209,
+              143,
+              32,
+              208,
+              190,
+              209,
+              130,
+              208,
+              191,
+              209,
+              128,
+              208,
+              176,
+              208,
+              178,
+              208,
+              187,
+              208,
+              181,
+              208,
+              189,
+              208,
+              190,
+              32,
+              208,
+              189,
+              208,
+              176,
+              32,
+              117,
+              115,
+              101,
+              114,
+              95,
+              122,
+              120,
+              115,
+              107,
+              121,
+              98,
+              57,
+              57,
+              64,
+              101,
+              120,
+              97,
+              109,
+              112,
+              108,
+              101,
+              46,
+              99,
+              111,
+              109,
+              46,
+              34,
+              44,
+              34,
+              99,
+              114,
+              101,
+              97,
+              116,
+              101,
+              100,
+              65,
+              116,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              49,
+              45,
+              49,
+              50,
+              84,
+              49,
+              53,
+              58,
+              52,
+              54,
+              58,
+              50,
+              55,
+              46,
+              49,
+              49,
+              51,
+              49,
+              53,
+              48,
+              90,
+              34,
+              125,
+              93
+            ]
+          },
+          "cookie": [],
+          "responseTime": 11,
+          "responseSize": 685
+        },
+        "id": "1d666a3d-2931-4dc4-99fc-3c99646dcc95",
+        "assertions": [
+          {
+            "assertion": "Status 200",
+            "skipped": false
+          },
+          {
+            "assertion": "ANGRY notification exists for order2",
+            "skipped": false
+          }
+        ]
+      }
+    ],
+    "transfers": {
+      "responseTotal": 1760
+    },
+    "failures": [],
+    "error": null
+  }
+}

@@ -1,0 +1,147 @@
+openapi: 3.0.3
+info:
+  title: Shop API
+  version: 1.0.0
+  description: Публичный HTTP API Shop Stream App (Event Collaboration).
+servers:
+  - url: http://arch.homework
+paths:
+  /auth/register:
+    post:
+      summary: Регистрация
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:     { type: string }
+                email:    { type: string, format: email }
+                password: { type: string, minLength: 6 }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:    { type: integer, format: int64 }
+                  token: { type: string }
+        '409': { description: Conflict }
+  /auth/login:
+    post:
+      summary: Логин
+      tags: [User]
+      responses: { '200': { description: OK } }
+  /billing/accounts/me:
+    get:
+      summary: Текущий аккаунт
+      tags: [Billing]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+  /billing/accounts/me/deposit:
+    post:
+      summary: Пополнить
+      tags: [Billing]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { type: number, minimum: 0.01 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+  /orders:
+    post:
+      summary: Создать заказ (async)
+      tags: [Order]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [price]
+              properties:
+                price: { type: number, minimum: 0.01 }
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /orders/{id}:
+    get:
+      summary: Получить заказ
+      tags: [Order]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /notifications:
+    get:
+      summary: Уведомления текущего пользователя
+      tags: [Notification]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Notification' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Account:
+      type: object
+      properties:
+        accountId: { type: integer, format: int64 }
+        userId:    { type: integer, format: int64 }
+        balance:   { type: number }
+    Order:
+      type: object
+      properties:
+        orderId:   { type: integer, format: int64 }
+        userId:    { type: integer, format: int64 }
+        price:     { type: number }
+        status:    { type: string, enum: [NEW, PAID, FAILED] }
+        createdAt: { type: string, format: date-time }
+    Notification:
+      type: object
+      properties:
+        id:        { type: integer, format: int64 }
+        userId:    { type: integer, format: int64 }
+        orderId:   { type: integer, format: int64 }
+        type:      { type: string, enum: [HAPPY, ANGRY] }
+        subject:   { type: string }
+        body:      { type: string }
+        createdAt: { type: string, format: date-time }

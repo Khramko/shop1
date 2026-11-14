@@ -1,0 +1,110 @@
+
+
+x-app: &app
+  restart: unless-stopped
+  depends_on:
+    kafka:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+  environment: &app-env
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_USER: app_user
+    DB_PASSWORD: securePassword123
+    KAFKA_BOOTSTRAP: kafka:9092
+    JWT_SECRET_KEY: dev-secret-key-must-be-at-least-32-chars-long!!
+    SPRING_PROFILES_ACTIVE: docker
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: securePassword123
+      POSTGRES_DB: postgres
+    ports: ["5433:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user"]
+      interval: 5s
+      retries: 20
+
+  gateway:
+    image: nginx:alpine
+    depends_on: [user-service, billing-service, order-service, notification-service]
+    ports: ["8080:80"]
+    volumes:
+      - ./docker/nginx-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+
+  kafka:
+    image: apache/kafka:4.1.1
+    ports: ["9092:9092"]
+    environment:
+      CLUSTER_ID: "4L6G9nxwQreSVeTuSsh_Hg"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes: [kafkadata:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      retries: 20
+
+  user-service:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { MODULE: user-service }
+    environment:
+      <<: *app-env
+      DB_NAME: user_db
+    ports: ["8081:8081"]
+
+  billing-service:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { MODULE: billing-service }
+    environment:
+      <<: *app-env
+      DB_NAME: billing_db
+    ports: ["8082:8082"]
+
+  order-service:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { MODULE: order-service }
+    environment:
+      <<: *app-env
+      DB_NAME: order_db
+    ports: ["8083:8083"]
+
+  notification-service:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { MODULE: notification-service }
+    environment:
+      <<: *app-env
+      DB_NAME: notification_db
+    ports: ["8084:8084"]
+
+volumes:
+  pgdata:
+  kafkadata:
