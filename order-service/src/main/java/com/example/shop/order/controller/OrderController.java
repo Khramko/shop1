@@ -11,6 +11,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/orders")
@@ -22,16 +23,25 @@ public class OrderController {
 
     @PostMapping
     public ResponseEntity<?> create(@AuthenticationPrincipal AuthenticatedUser principal,
+                                    @RequestHeader(value = "Idempotency-Key", required = false) String idemKey,
                                     @Valid @RequestBody CreateOrderRequest req) {
+
         if (orderService.isSagaEnabled()) {
             if (req.getSku() == null || req.getSku().isBlank()
                     || req.getQty() == null || req.getQty() < 1
                     || req.getDeliverySlot() == null || req.getDeliverySlot().isBlank()) {
-                return ResponseEntity.badRequest().body(java.util.Map.of(
+                return ResponseEntity.badRequest().body(Map.of(
                         "error", "validation",
                         "details", "sku, qty, deliverySlot are required when saga enabled"));
             }
         }
+
+        // Идемпотентный путь: клиент передал Idempotency-Key
+        if (idemKey != null && !idemKey.isBlank()) {
+            return orderService.createIdempotent(principal.id(), req, idemKey.trim());
+        }
+
+        // Обратная совместимость: без ключа — каждый вызов создаёт новый заказ
         OrderResponse r = orderService.create(principal.id(), req.getPrice(),
                 req.getSku(), req.getQty(), req.getDeliverySlot());
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(r);
