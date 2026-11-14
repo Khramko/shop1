@@ -37,3 +37,6 @@ management:
 security.jwt:
   secret-key: ${JWT_SECRET_KEY:change-me-please-this-key-must-be-at-least-32-chars}
   expiration-ms: 3600000
+
+saga:
+  enabled: ${SAGA_ENABLED:true}

@@ -70,7 +70,7 @@ spec:
           args:
             - |
               until pg_isready -h postgres -U app_user; do sleep 1; done
-              for db in user_db billing_db order_db notification_db; do
+              for db in user_db billing_db order_db notification_db warehouse_db delivery_db; do
                 echo "CREATE DATABASE $db OWNER app_user;" | \
                   psql -h postgres -U app_user -d postgres -v ON_ERROR_STOP=1 || true
               done

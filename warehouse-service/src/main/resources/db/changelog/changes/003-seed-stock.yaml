@@ -1,0 +1,15 @@
+databaseChangeLog:
+  - changeSet:
+      id: 003-seed-stock
+      author: shop
+      changes:
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-001" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-002" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-003" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-004" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-005" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-006" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-007" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-008" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-009" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }
+        - insert: { tableName: stock, columns: [ { column: { name: sku, value: "SKU-010" } }, { column: { name: qty_available, valueNumeric: 100 } }, { column: { name: qty_reserved,  valueNumeric: 0 } } ] }

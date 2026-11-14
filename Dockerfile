@@ -8,6 +8,8 @@ COPY user-service ./user-service
 COPY billing-service ./billing-service
 COPY order-service ./order-service
 COPY notification-service ./notification-service
+COPY warehouse-service ./warehouse-service
+COPY delivery-service ./delivery-service
 RUN mvn -q -pl ${MODULE} -am -DskipTests package
 
 FROM eclipse-temurin:17-jdk-alpine
@@ -16,5 +18,5 @@ WORKDIR /app
 COPY --from=build /src/${MODULE}/target/*.jar app.jar
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup && chown appuser:appgroup app.jar
 USER appuser
-EXPOSE 8081 8082 8083 8084
+EXPOSE 8081 8082 8083 8084 8085 8086
 ENTRYPOINT ["java", "-jar", "app.jar"]

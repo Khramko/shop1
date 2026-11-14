@@ -2,34 +2,28 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-BASE_URL="${1:-http://arch.homework}"   # ← default как в ДЗ
-ENV_FILE="${2:-etc/shop-stream-app.postman_environment.json}"
+BASE_URL="${1:-http://arch.homework}"
+COLLECTION="${2:-etc/shop-stream-app.postman_collection.json}"
 
 if ! command -v npx >/dev/null 2>&1; then
-  echo "❌ npx не найден. Установите Node.js >=18."
-  exit 1
+  echo "❌ npx не найден. Установите Node.js >=18."; exit 1
 fi
-
 mkdir -p reports
-
-# Генерируем временный env с baseUrl
 TMP_ENV="$(mktemp).json"
-cat > "$TMP_ENV" <<EOF
+cat > "$TMP_ENV" <<JSON
 {
   "name": "runtime",
-  "values": [
-    { "key": "baseUrl", "value": "$BASE_URL", "enabled": true }
-  ]
+  "values": [ { "key": "baseUrl", "value": "$BASE_URL", "enabled": true } ]
 }
-EOF
+JSON
 
-echo "→ Newman against baseUrl=$BASE_URL"
-npx --yes newman run etc/shop-stream-app.postman_collection.json \
+echo "→ Newman against baseUrl=$BASE_URL collection=$COLLECTION"
+npx --yes newman run "$COLLECTION" \
   --environment "$TMP_ENV" \
   --reporters cli,json \
   --reporter-json-export "reports/newman-$(date +%Y%m%d-%H%M%S).json" \
   --timeout-request 30000 \
-  --delay-request 500
+  --delay-request 300
 
 rm -f "$TMP_ENV"
 echo "✅ Отчёт в reports/"

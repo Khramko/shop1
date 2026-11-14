@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: warehouse-service, namespace: shop }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: warehouse-service } }
+  template:
+    metadata: { labels: { app: warehouse-service } }
+    spec:
+      containers:
+        - name: warehouse-service
+          image: shop/warehouse-service:dev
+          imagePullPolicy: IfNotPresent
+          ports: [ { containerPort: 8085, name: http } ]
+          envFrom:
+            - configMapRef: { name: shop-common }
+            - secretRef:    { name: shop-secrets }
+          env:
+            - { name: DB_NAME, value: "warehouse_db" }
+            - { name: SPRING_PROFILES_ACTIVE, value: "docker" }
+          readinessProbe:
+            httpGet: { path: /health, port: 8085 }
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: { path: /health, port: 8085 }
+            initialDelaySeconds: 90
+            periodSeconds: 20
+          resources:
+            requests: { memory: "384Mi", cpu: "150m" }
+            limits:   { memory: "768Mi", cpu: "600m" }

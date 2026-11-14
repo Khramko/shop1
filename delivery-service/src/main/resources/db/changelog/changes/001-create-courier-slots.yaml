@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-courier-slots
+      author: shop
+      changes:
+        - createTable:
+            tableName: courier_slots
+            columns:
+              - column: { name: id,         type: BIGSERIAL,  constraints: { primaryKey: true, nullable: false } }
+              - column: { name: courier_id, type: BIGINT,     constraints: { nullable: false } }
+              - column: { name: slot,       type: VARCHAR(32), constraints: { nullable: false } }
+              - column: { name: status,     type: VARCHAR(16), defaultValue: FREE, constraints: { nullable: false } }
+        - createIndex:
+            tableName: courier_slots
+            indexName: idx_slot_status
+            columns: [ { column: { name: slot } }, { column: { name: status } } ]

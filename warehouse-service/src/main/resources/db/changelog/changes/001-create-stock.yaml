@@ -1,0 +1,11 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-stock
+      author: shop
+      changes:
+        - createTable:
+            tableName: stock
+            columns:
+              - column: { name: sku,           type: VARCHAR(64), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: qty_available, type: INT,         constraints: { nullable: false } }
+              - column: { name: qty_reserved,  type: INT,         defaultValueNumeric: 0, constraints: { nullable: false } }

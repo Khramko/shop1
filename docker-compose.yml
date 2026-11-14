@@ -34,7 +34,7 @@ services:
 
   gateway:
     image: nginx:alpine
-    depends_on: [user-service, billing-service, order-service, notification-service]
+    depends_on: [user-service, billing-service, order-service, notification-service, warehouse-service, delivery-service]
     ports: ["8080:80"]
     volumes:
       - ./docker/nginx-gateway.conf:/etc/nginx/conf.d/default.conf:ro
@@ -93,6 +93,28 @@ services:
       <<: *app-env
       DB_NAME: order_db
     ports: ["8083:8083"]
+
+  warehouse-service:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { MODULE: warehouse-service }
+    environment:
+      <<: *app-env
+      DB_NAME: warehouse_db
+    ports: ["8085:8085"]
+
+  delivery-service:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { MODULE: delivery-service }
+    environment:
+      <<: *app-env
+      DB_NAME: delivery_db
+    ports: ["8086:8086"]
 
   notification-service:
     <<: *app

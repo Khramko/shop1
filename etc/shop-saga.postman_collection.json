@@ -1,0 +1,288 @@
+{
+  "info": {
+    "name": "Shop Saga (Distributed Transactions)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Saga: happy path, провал billing, провал warehouse (компенсация funds), провал delivery (компенсация stock+funds). baseUrl = http://arch.homework."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://arch.homework", "type": "default" }
+  ],
+  "item": [
+    {
+      "name": "A01. Register user",
+      "event": [
+        { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+          "const rnd = Math.random().toString(36).substring(2, 10);",
+          "pm.collectionVariables.set('email', `saga_${rnd}@example.com`);",
+          "pm.collectionVariables.set('password', 'password123');",
+          "pm.collectionVariables.set('name', `Saga User ${rnd}`);",
+          "const d1 = new Date(); d1.setDate(d1.getDate() + 1);",
+          "pm.collectionVariables.set('slotA', d1.toISOString().slice(0,10) + 'T10:00');",
+          "const d2 = new Date(); d2.setDate(d2.getDate() + 2);",
+          "pm.collectionVariables.set('slotC', d2.toISOString().slice(0,10) + 'T12:00');"
+        ]}},
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('201', () => pm.response.to.have.status(201));",
+          "const j = pm.response.json();",
+          "pm.collectionVariables.set('token', j.token);",
+          "pm.collectionVariables.set('userId', j.id);"
+        ]}}
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"{{name}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}" },
+        "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth","register"] }
+      }
+    },
+    {
+      "name": "A02. Poll account",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "const attempt = +(pm.collectionVariables.get('accA') || 0);",
+          "if ((pm.response.code === 500 || pm.response.code === 404) && attempt < 10) {",
+          "  pm.collectionVariables.set('accA', attempt + 1);",
+          "  postman.setNextRequest('A02. Poll account');",
+          "} else {",
+          "  pm.collectionVariables.set('accA', 0);",
+          "  pm.test('200', () => pm.response.to.have.status(200));",
+          "  pm.test('Balance 0', () => pm.expect(+pm.response.json().balance).to.eql(0));",
+          "}"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/billing/accounts/me", "host": ["{{baseUrl}}"], "path": ["billing","accounts","me"] }
+      }
+    },
+    {
+      "name": "A03. Deposit 1000",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "pm.test('Balance 1000', () => pm.expect(+pm.response.json().balance).to.eql(1000));"
+        ]}}
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\"amount\":1000}" },
+        "url": { "raw": "{{baseUrl}}/billing/accounts/me/deposit", "host": ["{{baseUrl}}"], "path": ["billing","accounts","me","deposit"] }
+      }
+    },
+    {
+      "name": "A04. Create order (happy, SKU-001)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('202', () => pm.response.to.have.status(202));",
+          "const j = pm.response.json();",
+          "pm.test('RESERVING', () => pm.expect(j.status).to.eql('RESERVING'));",
+          "pm.collectionVariables.set('orderAId', j.orderId);"
+        ]}}
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"sku\": \"SKU-001\",\n  \"qty\": 2,\n  \"deliverySlot\": \"{{slotA}}\",\n  \"price\": 300\n}" },
+        "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] }
+      }
+    },
+    {
+      "name": "A05. Poll orderA until PAID",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "const attempt = +(pm.collectionVariables.get('pollA') || 0);",
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "const j = pm.response.json();",
+          "if ((j.status === 'RESERVING' || j.status === 'NEW') && attempt < 30) {",
+          "  pm.collectionVariables.set('pollA', attempt + 1);",
+          "  postman.setNextRequest('A05. Poll orderA until PAID');",
+          "} else {",
+          "  pm.collectionVariables.set('pollA', 0);",
+          "  pm.test('PAID', () => pm.expect(j.status).to.eql('PAID'));",
+          "}"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/orders/{{orderAId}}", "host": ["{{baseUrl}}"], "path": ["orders","{{orderAId}}"] }
+      }
+    },
+    {
+      "name": "A06. Balance = 700",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "pm.test('Balance 700', () => pm.expect(+pm.response.json().balance).to.eql(700));"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/billing/accounts/me", "host": ["{{baseUrl}}"], "path": ["billing","accounts","me"] }
+      }
+    },
+    {
+      "name": "B01. Create order (fail billing)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('202', () => pm.response.to.have.status(202));",
+          "pm.collectionVariables.set('orderBId', pm.response.json().orderId);"
+        ]}}
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"sku\": \"SKU-002\",\n  \"qty\": 1,\n  \"deliverySlot\": \"{{slotA}}\",\n  \"price\": 99999\n}" },
+        "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] }
+      }
+    },
+    {
+      "name": "B02. Poll orderB until FAILED",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "const attempt = +(pm.collectionVariables.get('pollB') || 0);",
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "const j = pm.response.json();",
+          "if ((j.status === 'RESERVING' || j.status === 'COMPENSATING') && attempt < 30) {",
+          "  pm.collectionVariables.set('pollB', attempt + 1);",
+          "  postman.setNextRequest('B02. Poll orderB until FAILED');",
+          "} else {",
+          "  pm.collectionVariables.set('pollB', 0);",
+          "  pm.test('FAILED', () => pm.expect(j.status).to.eql('FAILED'));",
+          "}"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/orders/{{orderBId}}", "host": ["{{baseUrl}}"], "path": ["orders","{{orderBId}}"] }
+      }
+    },
+    {
+      "name": "B03. Balance still 700",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "pm.test('Balance 700', () => pm.expect(+pm.response.json().balance).to.eql(700));"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/billing/accounts/me", "host": ["{{baseUrl}}"], "path": ["billing","accounts","me"] }
+      }
+    },
+    {
+      "name": "C01. Create order (fail warehouse, qty huge)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('202', () => pm.response.to.have.status(202));",
+          "pm.collectionVariables.set('orderCId', pm.response.json().orderId);"
+        ]}}
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"sku\": \"SKU-003\",\n  \"qty\": 9999,\n  \"deliverySlot\": \"{{slotC}}\",\n  \"price\": 200\n}" },
+        "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] }
+      }
+    },
+    {
+      "name": "C02. Poll orderC until FAILED",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "const attempt = +(pm.collectionVariables.get('pollC') || 0);",
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "const j = pm.response.json();",
+          "if ((j.status === 'RESERVING' || j.status === 'COMPENSATING') && attempt < 30) {",
+          "  pm.collectionVariables.set('pollC', attempt + 1);",
+          "  postman.setNextRequest('C02. Poll orderC until FAILED');",
+          "} else {",
+          "  pm.collectionVariables.set('pollC', 0);",
+          "  pm.test('FAILED', () => pm.expect(j.status).to.eql('FAILED'));",
+          "}"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/orders/{{orderCId}}", "host": ["{{baseUrl}}"], "path": ["orders","{{orderCId}}"] }
+      }
+    },
+    {
+      "name": "C03. Balance restored to 700 (compensation)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "pm.test('Balance restored 700', () => pm.expect(+pm.response.json().balance).to.eql(700));"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/billing/accounts/me", "host": ["{{baseUrl}}"], "path": ["billing","accounts","me"] }
+      }
+    },
+    {
+      "name": "C04. Stock unchanged (SKU-003 = 100)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "const sku = pm.response.json().find(s => s.sku === 'SKU-003');",
+          "pm.test('SKU-003 available = 100', () => pm.expect(sku.qtyAvailable).to.eql(100));"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/warehouse/stock", "host": ["{{baseUrl}}"], "path": ["warehouse","stock"] }
+      }
+    },
+    {
+      "name": "C05. ANGRY notification with STOCK reason",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "const arr = pm.response.json();",
+          "const n = arr.find(x => x.orderId == pm.collectionVariables.get('orderCId'));",
+          "pm.test('ANGRY exists', () => pm.expect(n).to.exist);",
+          "pm.test('Reason STOCK', () => pm.expect(n.body).to.include('STOCK'));"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/notifications", "host": ["{{baseUrl}}"], "path": ["notifications"] }
+      }
+    },
+    {
+      "name": "D01. Idempotency: GET orderA again = PAID",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "pm.test('still PAID', () => pm.expect(pm.response.json().status).to.eql('PAID'));"
+        ]}}
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{baseUrl}}/orders/{{orderAId}}", "host": ["{{baseUrl}}"], "path": ["orders","{{orderAId}}"] }
+      }
+    }
+  ]
+}

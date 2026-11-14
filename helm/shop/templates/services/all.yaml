@@ -1,0 +1,48 @@
+{{- range $key, $svc := .Values.services }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc.name }}
+  namespace: {{ $.Values.namespace }}
+  labels: { app: {{ $svc.name }} }
+spec:
+  selector: { app: {{ $svc.name }} }
+  ports: [ { name: http, port: {{ $svc.port }}, targetPort: {{ $svc.port }} } ]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svc.name }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: {{ $svc.name }} } }
+  template:
+    metadata: { labels: { app: {{ $svc.name }} } }
+    spec:
+      containers:
+        - name: {{ $svc.name }}
+          image: shop/{{ $svc.name }}:{{ $.Values.image.tag }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports: [ { containerPort: {{ $svc.port }}, name: http } ]
+          envFrom:
+            - configMapRef: { name: shop-common }
+            - secretRef:    { name: shop-secrets }
+          env:
+            - { name: DB_NAME, value: {{ $svc.db | quote }} }
+            - { name: SPRING_PROFILES_ACTIVE, value: docker }
+            - { name: SAGA_ENABLED, value: "true" }
+          readinessProbe:
+            httpGet: { path: /health, port: {{ $svc.port }} }
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: { path: /health, port: {{ $svc.port }} }
+            initialDelaySeconds: 90
+            periodSeconds: 20
+          resources:
+            requests: { memory: "384Mi", cpu: "150m" }
+            limits:   { memory: "768Mi", cpu: "600m" }
+{{- end }}

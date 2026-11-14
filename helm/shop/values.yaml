@@ -1,0 +1,28 @@
+namespace: shop
+
+image:
+  pullPolicy: IfNotPresent
+  tag: dev
+
+services:
+  user:         { name: user-service,         port: 8081, db: user_db }
+  billing:      { name: billing-service,      port: 8082, db: billing_db }
+  order:        { name: order-service,        port: 8083, db: order_db }
+  notification: { name: notification-service, port: 8084, db: notification_db }
+  warehouse:    { name: warehouse-service,    port: 8085, db: warehouse_db }
+  delivery:     { name: delivery-service,     port: 8086, db: delivery_db }
+
+postgres:
+  user: app_user
+  password: securePassword123
+  storage: 5Gi
+
+kafka:
+  clusterId: "4L6G9nxwQreSVeTuSsh_Hg"
+  storage: 5Gi
+
+jwt:
+  secretKey: prod-secret-key-change-it-now-32-chars-minimum
+
+ingress:
+  host: arch.homework

@@ -16,3 +16,5 @@ spec:
           - { path: /billing/.*,      pathType: ImplementationSpecific, backend: { service: { name: billing-service,      port: { number: 8082 } } } }
           - { path: /orders.*,        pathType: ImplementationSpecific, backend: { service: { name: order-service,        port: { number: 8083 } } } }
           - { path: /notifications.*, pathType: ImplementationSpecific, backend: { service: { name: notification-service, port: { number: 8084 } } } }
+          - { path: /warehouse/.*,    pathType: ImplementationSpecific, backend: { service: { name: warehouse-service,    port: { number: 8085 } } } }
+          - { path: /delivery/.*,     pathType: ImplementationSpecific, backend: { service: { name: delivery-service,     port: { number: 8086 } } } }

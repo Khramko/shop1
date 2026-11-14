@@ -4,7 +4,7 @@ set -euo pipefail
 
 TAG="${1:-dev}"
 
-for MODULE in user-service billing-service order-service notification-service; do
+for MODULE in user-service billing-service order-service notification-service warehouse-service delivery-service; do
   echo "▶ Building shop/${MODULE}:${TAG}"
   docker build \
     --build-arg MODULE="${MODULE}" \

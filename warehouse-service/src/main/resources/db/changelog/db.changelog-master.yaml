@@ -1,0 +1,4 @@
+databaseChangeLog:
+  - include: { file: changes/001-create-stock.yaml,       relativeToChangelogFile: true }
+  - include: { file: changes/002-create-reservations.yaml, relativeToChangelogFile: true }
+  - include: { file: changes/003-seed-stock.yaml,          relativeToChangelogFile: true }

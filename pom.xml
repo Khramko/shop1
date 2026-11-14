@@ -25,6 +25,8 @@
         <module>billing-service</module>
         <module>order-service</module>
         <module>notification-service</module>
+        <module>warehouse-service</module>
+        <module>delivery-service</module>
     </modules>
 
     <properties>

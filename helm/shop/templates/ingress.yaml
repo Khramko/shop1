@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop
+  namespace: {{ .Values.namespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - { path: /auth/.*,         pathType: ImplementationSpecific, backend: { service: { name: {{ .Values.services.user.name }},         port: { number: {{ .Values.services.user.port }} } } } }
+          - { path: /api/.*,          pathType: ImplementationSpecific, backend: { service: { name: {{ .Values.services.user.name }},         port: { number: {{ .Values.services.user.port }} } } } }
+          - { path: /billing/.*,      pathType: ImplementationSpecific, backend: { service: { name: {{ .Values.services.billing.name }},      port: { number: {{ .Values.services.billing.port }} } } } }
+          - { path: /orders.*,        pathType: ImplementationSpecific, backend: { service: { name: {{ .Values.services.order.name }},        port: { number: {{ .Values.services.order.port }} } } } }
+          - { path: /notifications.*, pathType: ImplementationSpecific, backend: { service: { name: {{ .Values.services.notification.name }}, port: { number: {{ .Values.services.notification.port }} } } } }
+          - { path: /warehouse/.*,    pathType: ImplementationSpecific, backend: { service: { name: {{ .Values.services.warehouse.name }},    port: { number: {{ .Values.services.warehouse.port }} } } } }
+          - { path: /delivery/.*,     pathType: ImplementationSpecific, backend: { service: { name: {{ .Values.services.delivery.name }},     port: { number: {{ .Values.services.delivery.port }} } } } }

@@ -1,3 +1,4 @@
 databaseChangeLog:
   - include: { file: changes/001-create-accounts.yaml,         relativeToChangelogFile: true }
   - include: { file: changes/002-create-processed-orders.yaml, relativeToChangelogFile: true }
+  - include: { file: changes/003-create-reserved-funds.yaml,   relativeToChangelogFile: true }

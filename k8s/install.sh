@@ -16,7 +16,7 @@ kubectl apply -f kafka.yaml
 kubectl rollout status statefulset/kafka -n shop --timeout=180s
 
 echo "→ services..."
-kubectl apply -f user-service/, billing-service/, order-service/, notification-service/
+kubectl apply -f user-service/, billing-service/, order-service/, notification-service/, warehouse-service/, delivery-service/
 
 echo "→ ingress"
 kubectl apply -f ingress.yaml

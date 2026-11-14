@@ -34,15 +34,15 @@ public class BillingEventsListener {
     @Transactional
     public void onFundsWithdrawn(FundsWithdrawnEvent e) {
         orderRepository.findById(e.orderId()).ifPresent(o -> {
+            // v2-заказы ведёт SagaOrchestrator — v1 их не трогает
             if (o.getStatus() != Order.Status.NEW) {
-                log.info("Order {} already in status {} — skipping", o.getId(), o.getStatus());
+                log.info("Order {} in status {} — v1 skip", o.getId(), o.getStatus());
                 return;
             }
             o.setStatus(Order.Status.PAID);
             orderRepository.save(o);
             publisher.publishOrderPaid(o);
-            log.info("Order {} PAID (userId={}, price={}, balanceAfter={})",
-                     o.getId(), o.getUserId(), o.getPrice(), e.balance());
+            log.info("Order {} PAID (v1) userId={} price={}", o.getId(), o.getUserId(), o.getPrice());
         });
     }
 
@@ -59,13 +59,13 @@ public class BillingEventsListener {
     public void onFundsWithdrawFailed(FundsWithdrawFailedEvent e) {
         orderRepository.findById(e.orderId()).ifPresent(o -> {
             if (o.getStatus() != Order.Status.NEW) {
-                log.info("Order {} already in status {} — skipping", o.getId(), o.getStatus());
+                log.info("Order {} in status {} — v1 skip", o.getId(), o.getStatus());
                 return;
             }
             o.setStatus(Order.Status.FAILED);
             orderRepository.save(o);
             publisher.publishOrderFailed(o, e.reason());
-            log.info("Order {} FAILED reason={}", o.getId(), e.reason());
+            log.info("Order {} FAILED (v1) reason={}", o.getId(), e.reason());
         });
     }
 }
