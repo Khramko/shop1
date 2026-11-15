@@ -283,6 +283,117 @@
         "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
         "url": { "raw": "{{baseUrl}}/orders/{{orderAId}}", "host": ["{{baseUrl}}"], "path": ["orders","{{orderAId}}"] }
       }
+    },
+    {
+      "name": "E01. Create order with Idempotency-Key (first call)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const rnd = Math.random().toString(36).substring(2, 10);",
+              "pm.collectionVariables.set('idemKey', `idem-${rnd}`);",
+              "pm.collectionVariables.set('idemBody', JSON.stringify({",
+              "  sku: 'SKU-001', qty: 1, deliverySlot: pm.collectionVariables.get('slotA'), price: 100",
+              "}));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+              "pm.test('No replay header on first call', () =>",
+              "  pm.expect(pm.response.headers.has('X-Idempotent-Replay')).to.eql(false));",
+              "const j = pm.response.json();",
+              "pm.test('Has orderId', () => pm.expect(j.orderId).to.be.a('number'));",
+              "pm.collectionVariables.set('orderEId', j.orderId);",
+              "pm.collectionVariables.set('orderEBody', pm.response.text());"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Idempotency-Key", "value": "{{idemKey}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{{idemBody}}" },
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": ["{{baseUrl}}"],
+          "path": ["orders"]
+        }
+      }
+    },
+    {
+      "name": "E02. Repeat same POST with same Idempotency-Key",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('202 Accepted (replay)', () => pm.response.to.have.status(202));",
+              "pm.test('X-Idempotent-Replay: true', () =>",
+              "  pm.expect(pm.response.headers.get('X-Idempotent-Replay')).to.eql('true'));",
+              "const j = pm.response.json();",
+              "pm.test('Same orderId as first call', () =>",
+              "  pm.expect(j.orderId).to.eql(+pm.collectionVariables.get('orderEId')));",
+              "pm.test('Identical response body', () =>",
+              "  pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('orderEBody')));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Idempotency-Key", "value": "{{idemKey}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{{idemBody}}" },
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": ["{{baseUrl}}"],
+          "path": ["orders"]
+        }
+      }
+    },
+    {
+      "name": "E03. GET orderE — still a single order, not duplicated",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('Same orderId', () =>",
+              "  pm.expect(j.orderId).to.eql(+pm.collectionVariables.get('orderEId')));",
+              "pm.test('Status is a valid saga state', () =>",
+              "  pm.expect(['RESERVING','PAID','FAILED','COMPENSATING','COMPENSATION_FAILED'])",
+              "    .to.include(j.status));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{orderEId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["orders", "{{orderEId}}"]
+        }
+      }
     }
   ]
 }
