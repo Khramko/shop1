@@ -1,263 +1,531 @@
-# ⚠️ Ограничения
+# Теоретическая часть: варианты взаимодействия сервисов
 
-Проект реализует Event Collaboration в объёме, достаточном для ДЗ («сервисы не падают»), но не является production-ready. Ниже — осознанно не реализованные вещи, их последствия и что нужно сделать для продакшена.
+## 1. Сравнение вариантов
+
+| Вариант | Связность | Отказоустойчивость | Сложность | Применимость |
+|---|---|---|---|---|
+| 1. Только HTTP | сильная | низкая (каскадные отказы) | низкая | MVP, малые системы |
+| 2. HTTP + брокер для нотификаций | средняя | средняя | средняя | средние системы |
+| 3. Event Collaboration | слабая | высокая | высокая | **выбран для v1** |
+| 4. Гибрид (HTTP billing + события notification) | средняя | средняя | средняя | компромисс |
+| 5. Saga Orchestration | слабая | высокая | высокая | **выбран для v2 (ДЗ)** |
+
+**Обоснование выбора:** итоговая реализация использует **два режима**, переключаемых флагом `saga.enabled`:
+
+- **v1 (Event Collaboration)** — исторический режим, 6 топиков, цепочка `order.created → funds.withdrawn → order.paid`. Подходит для простых сценариев без компенсаций.
+- **v2 (Saga Orchestration)** — основной режим по умолчанию (`saga.enabled=true`), 21+ топик, центральный `SagaOrchestrator` в `order-service`, компенсации в обратном порядке.
+
+Оба режима сосуществуют: v1- и saga-listener'ы order-service — разные группы (`order-service` vs `order-service-saga`), v1-listener пропускает заказы в статусах, отличных от `NEW`.
+
+Плата за Saga — усложнение отладки, необходимость `saga_states`, риск «зависания» при потере события (см. `docs/limitations.md` → п. 3).
 
 ---
 
-## 1. Нет Outbox pattern
+## 2. Вариант 1. Только HTTP-взаимодействие
 
-**Что не так.** Публикация в Kafka и коммит транзакции БД — две независимые операции:
+Все вызовы синхронные. Order-service напрямую вызывает billing-service
+(списание) и notification-service (отправка письма). Если любой из них
+недоступен — заказ не создаётся.
 
-```java
-@Transactional
-public OrderResponse create(Long userId, BigDecimal price) {
-    Order o = orderRepository.save(new Order(userId, price)); // ← коммит БД
-    publisher.publishOrderCreated(o);                          // ← отдельный send()
-    return OrderResponse.from(o);
-}
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant O as Order Service
+    participant B as Billing Service
+    participant N as Notification Service
+
+    U->>O: POST /orders {price}
+    O->>B: POST /billing/withdraw {userId, orderId, amount}
+    alt funds ok
+        B-->>O: 200 {accountId, balance}
+        O->>O: Order.status = PAID
+        O->>N: POST /notifications {userId, orderId, type=HAPPY}
+        N-->>O: 201 {notificationId}
+        O-->>U: 200 {status: PAID}
+    else insufficient / no account
+        B-->>O: 402 {reason: INSUFFICIENT_FUNDS | NO_ACCOUNT}
+        O->>O: Order.status = FAILED
+        O->>N: POST /notifications {userId, orderId, type=ANGRY, reason}
+        N-->>O: 201 {notificationId}
+        O-->>U: 200 {status: FAILED}
+    end
 ```
 
-Если процесс упадёт (OOM, kill -9, network partition до брокера) между `save()` и `kafka.send()`, событие **потеряется**, а заказ останется в `NEW` навсегда. Обратный случай — `send()` прошёл, а транзакция откатилась — consumer получит событие о несуществующем заказе (частично лечится идемпотентностью consumer'а, но `orderId` в БД не будет).
+### IDL (фрагмент, OpenAPI-style)
 
-**Последствия.**
-- Заказ «висит» в `NEW` при списанных/несписанных деньгах.
-- UI polling бесконечно возвращает `NEW` (Newman падает через 20 попыток).
+```yaml
+# Billing Service
+POST /billing/withdraw
+  body:
+    userId:  int64
+    orderId: int64
+    amount:  decimal
+  responses:
+    200: { accountId: int64, balance: decimal }
+    402: { error: string, reason: enum[INSUFFICIENT_FUNDS, NO_ACCOUNT] }
+    404: { error: string }
 
-**Решение.** Transactional Outbox: таблица `outbox (id, aggregate_id, topic, payload, created_at, published_at NULL)`. В той же транзакции, что и `save(order)`, пишется строка `outbox`. Отдельный polling-воркер (`@Scheduled`) читает непубликованные строки, отправляет в Kafka, ставит `published_at`. At-least-once гарантия; consumer'ы уже идемпотентны.
+# Notification Service
+POST /notifications
+  body:
+    userId:  int64
+    orderId: int64
+    type:    enum[HAPPY, ANGRY]
+    subject: string
+    body:    string
+  responses:
+    201: { id: int64 }
 
-**Стоимость.** ~1 таблица + 1 воркер на сервис. Не реализовано.
-
----
-
-## 2. Нет retry / DLQ
-
-**Что не так.** В `application.yaml` consumer'ов нет `DefaultErrorHandler`. Spring Kafka по умолчанию ретраит исключение **бесконечно** с backoff, блокируя партицию. Если consumer падает на «ядовитом» сообщении (например, `OrderCreatedEvent` без `orderId` или десериализация ломается), consumer застревает, лаг растёт, остальные сообщения в партиции не обрабатываются.
-
-**Последствия.**
-- Один битый payload → остановка обработки топика для группы.
-- Нет способа «отложить» сообщение и продолжить.
-
-**Решение.** `DefaultErrorHandler` с `FixedBackOff(1000L, 3)` + `DeadLetterPublishingRecoverer` в `<topic>.DLT`. DLT читается вручную или отдельным сервисом. Плюс метрика `kafka_consumer_fetch_manager_records_lag` и алерт.
-
-**Стоимость.** ~20 строк конфигурации + DLT-топики. Не реализовано.
-
----
-
-## 3. Нет saga-компенсации
-
-**Что не так.** Сценарий успешного заказа — цепочка `order.created → funds.withdrawn → order.paid`. Если `funds.withdrawn` дошёл до order-service, но `order.paid` (публикуемый order-service'ом) потерян — notification-service не создаст HAPPY. Деньги списаны, заказ в `PAID`, но пользователь не уведомлён. Хуже: если order-service упал после `funds.withdrawn`, но до `orderRepository.save(PAID)`, заказ останется `NEW` при списанных деньгах.
-
-**Последствия.**
-- Деньги списаны, заказ `NEW` → деньги «зависли».
-- HAPPY/ANGRY не создаются при потере `order.paid`/`order.failed`.
-
-**Решение.** Saga с компенсацией:
-- `billing-service` при получении `funds.withdrawn` (свой же publish) — нет, компенсация инициируется order-service'ом.
-- Order-service: если `funds.withdrawn` получен, но `order.paid` не подтверждён через N секунд — publish `order.compensate` → billing возвращает деньги.
-- Или: `billing-service` периодически сверяет `processed_orders` с фактическим состоянием заказов (через отдельный HTTP/топик) и откатывает «зависшие» списания.
-
-**Стоимость.** Новая таблица `compensations`, таймеры, доп. топик. Не реализовано.
-
----
-
-## 4. Kafka = single-node (KRaft)
-
-**Что не так.** `k8s/kafka.yaml` и `docker-compose.yml` — один брокер, `replication.factor=1`, `min.insync.replicas=1`. При падении брокера:
-- producer'ы получают `NotEnoughReplicas` / `TimeoutException`;
-- consumer'ы теряют соединение;
-- offsets-топик (`__consumer_offsets`) без реплик — потеря offset'ов при повреждении диска.
-
-**Последствия.** Любой рестарт Kafka = простой всей системы. Нет отказоустойчивости.
-
-**Решение.** Кластер ≥3 брокеров, `replication.factor≥3`, `min.insync.replicas≥2`, `unclean.leader.election.enable=false`. В k8s — StatefulSet с 3 репликами и anti-affinity. Или managed Kafka (Confluent Cloud, MSK, Yandex Managed Kafka).
-
-**Стоимость.** Тройной ресурс, нетривиальный rollout. Не реализовано.
-
----
-
-## 5. Postgres = single instance
-
-**Что не так.** Один `StatefulSet` с `replicas: 1`, один PVC. Падение пода = простой записи до пересоздания (секунды-минуты). Повреждение PVC = потеря данных. Нет backup'ов.
-
-**Последствия.** Downtime при рестарте; нет PITR; нет read-реплик.
-
-**Решение.** Patroni / CloudNativePG / managed Postgres с репликацией и бэкапами (WAL-G, pgBackRest). `pg_dump` по cron — минимум.
-
-**Стоимость.** Отдельная инфраструктурная задача. Не реализовано.
-
----
-
-## 6. Eventual consistency
-
-**Что не так.** `POST /orders` возвращает `202 Accepted` с `status: NEW`. Фактический `PAID`/`FAILED` появляется через Kafka (обычно 1–3 с, но без верхней границы). Клиент обязан опрашивать `GET /orders/{id}`.
-
-**Последствия.**
-- UI не может показать финальный статус сразу.
-- Newman использует polling до 20 попыток × 500 мс = 10 с.
-- При перегрузке/отставании consumer'ов задержка может быть больше.
-
-**Решение.** WebSocket / SSE для push-уведомлений о смене статуса; либо client-side polling с экспоненциальным backoff и таймаутом. Сейчас — только polling.
-
-**Стоимость.** Новый транспорт (STOMP/SSE) + фронт. Не реализовано.
-
----
-
-## 7. Нет distributed tracing
-
-**Что не так.** Один HTTP-запрос `POST /orders` порождает цепочку `order.created → funds.withdrawn → order.paid` в трёх сервисах. В логах есть `request_id` (per HTTP), но нет `trace_id`/`span_id`, сквозного через Kafka.
-
-**Последствия.**
-- Нельзя быстро ответить «почему заказ X остался NEW» — нужно грепать логи 3 сервисов по `orderId`.
-- Нет latency-разбивки по hop'ам.
-
-**Решение.** OpenTelemetry + `micrometer-tracing-bridge-otlp`, propagation через Kafka-заголовки (`traceparent`), экспорт в Jaeger/Tempo.
-
-**Стоимость.** Зависимость + конфигурация на каждом сервисе + бэкенд. Не реализовано.
-
----
-
-## 8. Нет централизованных логов
-
-**Что не так.** JSON-логи пишутся в stdout, доступны через `kubectl logs` или `docker compose logs`. Нет агрегации и поиска.
-
-**Последствия.**
-- Поиск по `orderId`/`request_id` — вручную по каждому поду.
-- Нет retention/rotation за пределами k8s (`containerLogMaxSize`).
-
-**Решение.** Loki + Promtail (лёгкий вариант) или ELK/OpenSearch. `logback-spring.xml` уже совместим — JSON сразу парсится.
-
-**Стоимость.** Отдельный стек. Не реализовано.
-
----
-
-## 9. Нет бизнес-метрик
-
-**Что не так.** Метрики только технические (`http.server.requests`, JVM, Hikari). Нет счётчиков:
-- `orders_created_total{status="NEW"}`,
-- `orders_paid_total`,
-- `orders_failed_total{reason=...}`,
-- `funds_withdrawn_total`,
-- `notifications_created_total{type=...}`.
-
-**Последствия.** В Grafana видно, что `/orders` вызывается, но не видно, сколько заказов успешны. Бизнес-здоровье оценивается только через логи.
-
-**Решение.** `MeterRegistry.counter("orders.paid")` в listener'ах (`onFundsWithdrawn`, `onFundsWithdrawFailed`) и `saveHappy`/`saveAngry`. Плюс теги `reason`.
-
-**Стоимость.** ~10 строк на сервис. Не реализовано.
-
----
-
-## 10. Нет оптимистичной блокировки на `accounts`
-
-**Что не так.** `Account` обновляется в `onOrderCreated`:
-
-```java
-Account acc = accountRepository.findByUserId(e.userId()).orElse(...);
-acc.setBalance(acc.getBalance().subtract(e.price()));
-accountRepository.save(acc);
+# Order Service
+POST /orders
+  body: { price: decimal }
+  responses:
+    200: { orderId: int64, status: enum[NEW, PAID, FAILED] }
 ```
 
-Без `@Version` и без `SELECT ... FOR UPDATE`. Два `order.created` одного пользователя, обработанные параллельно (разные партиции — а ключ `userId`, значит одна партиция; но при `replicas>1` и ребалансе — возможно), могут дать **lost update**: оба прочитали `balance=700`, оба списали 300, итог `400` вместо `100`.
-
-**Последствия.** В текущей конфигурации (`replicas: 1`, ключ `userId` → одна партиция → один consumer) гонки нет. Но при масштабировании — есть.
-
-**Решение.** `@Version` на `Account` + `OptimisticLockingFailureException` → retry. Либо `@Lock(PESSIMISTIC_WRITE)` на `findByUserId`. Либо `UPDATE accounts SET balance = balance - :amount WHERE user_id = :uid AND balance >= :amount` с проверкой `rowCount`.
-
-**Стоимость.** 1 аннотация + retry. Не реализовано (не требуется при `replicas: 1`).
+**Плюсы:** простота, транзакционность (всё видно в одном логе), легко тестировать.
+**Минусы:** сильная связность; Order-service — единая точка отказа; при падении
+Notification не создаётся заказ (что семантически неверно); нет retry без
+отдельной логики; нельзя масштабировать независимо.
 
 ---
 
-## 11. Нет валидации на уровне consumer'ов
+## 3. Вариант 2. HTTP + брокер сообщений для нотификаций
 
-**Что не так.** `@KafkaListener` методы делают `if (e == null || e.orderId() == null) return;`, но не проверяют:
-- `price > 0` (отрицательная цена → «пополнение» баланса);
-- `amount == price` в `funds.withdrawn` (billing мог ошибиться);
-- `accountId` принадлежит `userId`.
+Заказ и списание — синхронно. Отправка уведомлений — через брокер: order-service
+публикует `order.paid` / `order.failed`, notification-service подписан.
 
-**Последствия.** Битое/вредоносное сообщение в топике (например, от скомпрометированного producer'а) может привести к некорректному балансу.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant O as Order Service
+    participant B as Billing Service
+    participant K as Kafka
+    participant N as Notification Service
 
-**Решение.** Валидация payload в listener'е + публикация в DLT при нарушении инварианта. Плюс JSON Schema / Avro + Schema Registry для контракта.
+    U->>O: POST /orders {price}
+    O->>B: POST /billing/withdraw {userId, orderId, amount}
+    alt funds ok
+        B-->>O: 200 {accountId, balance}
+        O->>O: Order.status = PAID
+        O->>K: publish order.paid {orderId, userId, price}
+    else insufficient
+        B-->>O: 402 {reason}
+        O->>O: Order.status = FAILED
+        O->>K: publish order.failed {orderId, userId, price, reason}
+    end
+    K->>N: order.paid | order.failed
+    N->>N: save Notification(HAPPY | ANGRY)
+    O-->>U: 200 {status}
+```
 
-**Стоимость.** Схемы + валидаторы. Не реализовано.
+### IDL
 
----
+```yaml
+# HTTP — как в варианте 1, но без POST /notifications
 
-## 12. Безопасность
+# Kafka topics
+topic: order.paid
+  payload: { orderId: int64, userId: int64, price: decimal }
 
-**Что не так.**
-- `JWT_SECRET_KEY` захардкожен в `k8s/common-secrets.yaml` (`prod-secret-key-change-it-now-32-chars-minimum`). Ротации нет.
-- `DB_PASSWORD=securePassword123` — тоже в репозитории.
-- Kafka без TLS/SASL: `PLAINTEXT://...` — любой под в namespace может читать/писать топики.
-- `/actuator/prometheus` открыт без аутентификации — метрики доступны снаружи (через ingress? нет — ingress не маршрутизирует `/actuator`, но внутри кластера — да).
-- Нет rate-limiting на `/auth/register` и `/auth/login` — brute-force пароля.
-- Нет CSRF-защиты (не нужна при stateless JWT, но `csrf.disable()` — осознанно).
+topic: order.failed
+  payload: { orderId: int64, userId: int64, price: decimal, reason: string }
+```
 
-**Решение.**
-- Секреты — через External Secrets Operator / Sealed Secrets / Vault, не в git.
-- Kafka — SASL/SCRAM + TLS.
-- Rate-limit — на ingress (`nginx.ingress.kubernetes.io/limit-rps`) или в приложении (Bucket4j).
-- `/actuator/**` — `management.endpoints.web.exposure.include: health,info` в prod-профиле, `prometheus` — только для ServiceMonitor.
-
-**Стоимость.** Инфраструктурная задача. Не реализовано (ДЗ не требует).
-
----
-
-## 13. Единый `SecurityConfig` — нет ролей
-
-**Что не так.** `common-security/SecurityConfig` даёт `authenticated()` всем, `permitAll` — только `/health`, `/actuator/**`, `/auth/**`. Ролей нет. `GET /api/profile/{id}` в legacy-коллекции был закрыт `@PreAuthorize("#id == principal.id")`, но в текущем `ProfileController` остался только `/api/profile` (без `{id}`), так что проверка не нужна.
-
-**Последствия.** Нет RBAC. Все аутентифицированные пользователи равны. Для магазина это ок (у каждого свой аккаунт), но нет админ-функций.
-
-**Решение.** Добавить `ROLE_ADMIN`, `@PreAuthorize("hasRole('ADMIN')")` на админ-эндпоинты, claim `roles` в JWT.
-
-**Стоимость.** Расширение модели. Не требуется ДЗ.
-
----
-
-## 14. Нет тестов
-
-**Что не так.** В репозитории нет:
-- юнит-тестов (`@SpringBootTest`, `@WebMvcTest`, `@DataJpaTest`);
-- integration-тестов с Testcontainers (PostgreSQL + Kafka);
-- contract-тестов на события (`UserCreatedEvent` и т.п.).
-
-Покрытие — только E2E через Newman (11 запросов, 22 ассерта).
-
-**Последствия.**
-- Рефакторинг listener'ов/статус-машины не защищён.
-- Нет теста на идемпотентность (`processed_orders`, повторный `funds.withdrawn`).
-- Нет теста на гонку `accounts` (см. п. 10).
-
-**Решение.** Testcontainers + `@SpringBootTest` для listener'ов; WireMock/Kafka testcontainers для producer'ов; `@DataJpaTest` для репозиториев.
-
-**Стоимость.** Существенная. Не реализовано.
+**Плюсы:** заказ не ждёт отправки email; notification-service можно перезапускать
+и масштабировать; billing остаётся синхронным — легко тестировать.
+**Минусы:** billing всё ещё SPOF для создания заказа; order-service обязан
+вызывать billing синхронно, что ограничивает автономность; нет событий о
+факте списания — если billing упадёт после списания, но до ответа, заказ
+останется `NEW` при списанных деньгах.
 
 ---
 
-## 15. Прочее
+## 4. Вариант 3. Event Collaboration (v1, исторический режим)
 
-- **`auto.create.topics.enable=true`.** Топики создаются с дефолтными `partitions=1`, `retention.ms=7d`. Для продакшена — явное создание с нужными параметрами.
-- **`ddl-auto: validate`.** Схема управляется только Liquibase. Изменения в сущностях без миграции → падение на старте (это фича, но требует дисциплины).
-- **`Schema Registry` нет.** Эволюция событий (добавление поля) — только через `spring.json.value.default.type` и обратную совместимость. Ломающие изменения не отслеживаются.
-- **`release.sh` — шаблон.** Содержит `<your-dockerhub>` placeholder, push не настроен. Для реального релиза нужен registry + CI.
-- **Нет CI/CD.** Сборка/тесты/деплой — вручную (`build-all.sh`, `k8s/install.sh`). Для продакшена — GitHub Actions / GitLab CI + ArgoCD.
-- **Нет Helm-чарта.** Только raw `kubectl apply -f`. Параметризация (образы, ресурсы, секреты) — через `kustomize` или Helm.
-- **`replicas: 1` у всех сервисов.** Нет горизонтального масштабирования. Для order/billing это требует решения п. 10 (optimistic lock) и п. 4 (Kafka cluster).
+Единственный канал межсервисного общения — Kafka. Каждый сервис публикует
+доменные события о своих изменениях и подписан на события других. Реализовано
+в проекте как **v1** (`saga.enabled=false`).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant O as Order Service
+    participant K as Kafka
+    participant B as Billing Service
+    participant N as Notification Service
+
+    Note over U,N: Успешный заказ
+    U->>O: POST /orders {price}
+    O->>O: save Order(status=NEW)
+    O->>K: publish order.created {orderId, userId, price}
+    K->>B: order.created
+    B->>B: check balance ≥ price
+    B->>B: balance -= price (processed_orders)
+    B->>K: publish funds.withdrawn {orderId, userId, accountId, amount, balance}
+    K->>O: funds.withdrawn
+    O->>O: Order.status = PAID
+    O->>K: publish order.paid {orderId, userId, price}
+    K->>N: order.paid
+    N->>N: save Notification(HAPPY)
+    U->>O: GET /orders/{id}
+    O-->>U: {status: PAID}
+    U->>N: GET /notifications
+    N-->>U: [{type: HAPPY, orderId}]
+```
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant O as Order Service
+    participant K as Kafka
+    participant B as Billing Service
+    participant N as Notification Service
+
+    Note over U,N: Недостаточно средств
+    U->>O: POST /orders {price=5000}
+    O->>O: save Order(status=NEW)
+    O->>K: publish order.created
+    K->>B: order.created
+    B->>B: balance < price → отказ
+    B->>K: publish funds.withdraw.failed {orderId, reason=INSUFFICIENT_FUNDS}
+    K->>O: funds.withdraw.failed
+    O->>O: Order.status = FAILED
+    O->>K: publish order.failed {orderId, userId, price, reason}
+    K->>N: order.failed
+    N->>N: save Notification(ANGRY)
+    U->>O: GET /orders/{id} (polling)
+    O-->>U: {status: FAILED}
+    U->>N: GET /notifications
+    N-->>U: [{type: ANGRY, orderId, reason}]
+```
+
+### IDL — HTTP API (v1)
+
+```yaml
+POST /auth/register
+  body: { name: string, email: string, password: string }
+  resp 201: { id: int64, token: string }
+
+GET  /billing/accounts/me
+  resp 200: { accountId: int64, userId: int64, balance: decimal }
+
+POST /billing/accounts/me/deposit
+  body: { amount: decimal }
+  resp 200: { accountId: int64, userId: int64, balance: decimal }
+
+POST /orders
+  body: { price: decimal }
+  resp 202: { orderId: int64, status: enum[NEW], createdAt: datetime }
+
+GET  /orders/{id}
+  resp 200: { orderId: int64, userId: int64, price: decimal,
+              status: enum[NEW, PAID, FAILED], createdAt: datetime }
+
+GET  /notifications
+  resp 200: [ { id: int64, userId: int64, orderId: int64,
+                type: enum[HAPPY, ANGRY], subject: string,
+                body: string, createdAt: datetime } ]
+```
+
+### IDL — Kafka-события (v1)
+
+```yaml
+topic: user.created
+  producer: user-service
+  consumers: [billing-service, notification-service]
+  payload: { userId: int64, email: string, name: string }
+
+topic: order.created
+  producer: order-service
+  consumers: [billing-service]
+  payload: { orderId: int64, userId: int64, price: decimal }
+
+topic: funds.withdrawn
+  producer: billing-service
+  consumers: [order-service]
+  payload: { orderId: int64, userId: int64, accountId: int64,
+             amount: decimal, balance: decimal }
+
+topic: funds.withdraw.failed
+  producer: billing-service
+  consumers: [order-service]
+  payload: { orderId: int64, userId: int64, accountId: int64?,
+             amount: decimal, reason: string }
+
+topic: order.paid
+  producer: order-service
+  consumers: [notification-service]
+  payload: { orderId: int64, userId: int64, price: decimal }
+
+topic: order.failed
+  producer: order-service
+  consumers: [notification-service]
+  payload: { orderId: int64, userId: int64, price: decimal, reason: string }
+```
+
+**Плюсы:** слабая связность; сервисы автономны; отказ одного сервиса не
+блокирует остальные; легко масштабировать; явная идемпотентность.
+**Минусы:** eventual consistency (нужен polling или WebSocket для UI);
+сложнее отладка (нужен distributed tracing); требуется проектировать
+идемпотентность и DLQ; **нет компенсаций** — если после `funds.withdrawn`
+что-то упало, деньги уже списаны, откатывать нечем.
 
 ---
 
-## Что реализовано, несмотря на ограничения
+## 5. Вариант 4. Гибрид (HTTP для billing + события для notification)
 
-Чтобы картина была честной — **есть**:
+Списание — синхронно (проще гарантировать консистентность баланса),
+уведомления — через брокер.
 
-- **Идемпотентность consumer'ов:** `processed_orders` (billing), `user_email_projection` (notification), статус-машина `NEW → PAID/FAILED` (order).
-- **Единый формат событий** (`common-events`) — producer и consumer не расходятся по типам.
-- **Stateless JWT** — горизонтальное масштабирование user-service без session store.
-- **JSON-логи** с MDC — база для будущей агрегации.
-- **Actuator + Micrometer** — база для будущего мониторинга.
-- **Readiness/liveness** — k8s не отправляет трафик в непрогретый под.
-- **Liquibase** — детерминированная схема БД.
-- **Multi-stage Dockerfile** — non-root runtime, один образ на 4 сервиса через `ARG MODULE`.
-- **E2E-покрытие** happy + failure path через Newman.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant O as Order Service
+    participant B as Billing Service
+    participant K as Kafka
+    participant N as Notification Service
 
-Эти ограничения — карта следующего этапа развития, а не баги. Каждый пункт имеет локальное решение, но требует выхода за рамки ДЗ.
+    U->>O: POST /orders {price}
+    O->>B: POST /billing/withdraw (sync)
+    alt funds ok
+        B-->>O: 200 {balance}
+        O->>O: Order.status = PAID
+        O->>K: publish order.paid
+    else insufficient
+        B-->>O: 402 {reason}
+        O->>O: Order.status = FAILED
+        O->>K: publish order.failed
+    end
+    K->>N: order.paid | order.failed
+    N->>N: save Notification
+    O-->>U: 200 {status}
+```
+
+### IDL
+
+Комбинация IDL из варианта 1 (`/billing/withdraw`) и варианта 2
+(Kafka-топики `order.paid` / `order.failed`).
+
+**Плюсы:** баланс консистентен сразу после ответа; отправка email не блокирует
+заказ; проще, чем полный Event Collaboration.
+**Минусы:** order-service обязан знать про billing (сильная связность по
+одному плечу); если billing упадёт после списания, но до ответа — заказ
+останется `NEW` при списанных деньгах (та же проблема, что в варианте 2);
+billing остаётся SPOF.
+
+---
+
+## 6. Вариант 5. Saga Orchestration (v2, основной режим ДЗ)
+
+Центральный оркестратор в `order-service` (`SagaOrchestrator`) управляет
+последовательностью шагов: `funds → stock → courier`. Каждый шаг — команда
+в Kafka, ответ — событие. При провале любого шага — компенсация в обратном
+порядке. Состояние саги — в таблице `saga_states`.
+
+### 6.1. Почему Orchestration, а не Choreography
+
+**Choreography** — каждый сервис сам решает, что делать, на основе событий.
+Нет центральной точки, но и нет явного владельца состояния саги. При трёх
+участниках и жёстком порядке шагов это приводит к:
+
+- размазыванию логики компенсации по всем сервисам;
+- сложности отладки (непонятно, на каком шаге заказ);
+- невозможности быстро ответить «что с заказом X».
+
+**Orchestration** — один сервис знает весь план и состояние. Компенсация —
+в одном месте (`SagaOrchestrator.compensate`). Состояние — в `saga_states`,
+что позволяет переживать рестарт и отлаживать по `order_id`.
+
+**Плата:** оркестратор — потенциальная SPOF (лечится репликацией +
+stateless-логикой, читающей `saga_states`); оркестратор знает про всех
+участников (связность выше, чем в чистом Event Collaboration).
+
+### 6.2. Поток событий (Happy path)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant O as order-service
+    participant K as Kafka
+    participant B as billing-service
+    participant W as warehouse-service
+    participant D as delivery-service
+    participant N as notification-service
+
+    U->>O: POST /orders {sku, qty, slot, price}
+    O->>O: save Order(RESERVING) + SagaState(STARTED)
+    O->>K: order.saga.started
+    O->>K: funds.reserve.command
+    K->>B: funds.reserve.command
+    B->>B: balance -= price (reserved_funds)
+    B->>K: funds.reserved
+    K->>O: funds.reserved
+    O->>O: SagaState → FUNDS_RESERVED
+    O->>K: stock.reserve.command
+    K->>W: stock.reserve.command
+    W->>W: qtyAvailable -= qty, qtyReserved += qty
+    W->>K: stock.reserved
+    K->>O: stock.reserved
+    O->>O: SagaState → STOCK_RESERVED
+    O->>K: courier.reserve.command
+    K->>D: courier.reserve.command
+    D->>D: slot → RESERVED
+    D->>K: courier.reserved
+    K->>O: courier.reserved
+    O->>O: SagaState → DONE, Order → PAID
+    O->>K: order.paid
+    K->>N: order.paid
+    N->>N: save Notification(HAPPY)
+```
+
+### 6.3. Компенсации
+
+| Где провалились | `doneStep` | Что откатываем |
+|---|---|---|
+| billing (`funds.reserve.failed`) | `STARTED` | ничего — деньги не списаны |
+| warehouse (`stock.reserve.failed`) | `FUNDS_RESERVED` | `funds.release.command` |
+| delivery (`courier.reserve.failed`) | `STOCK_RESERVED` | `stock.release.command` → после `stock.released` цепочкой `funds.release.command` |
+
+Курьер **не освобождается** при провале delivery — по контракту
+`DeliveryService.reserve` бросает исключение до сохранения `Reservation`.
+Ограничение (если `reserve` упал после `save`) — см. `docs/limitations.md` → п. 15.
+
+### 6.4. IDL — HTTP API (v2)
+
+```yaml
+POST /orders
+  headers: { Idempotency-Key: string? }
+  body: { sku: string, qty: int, deliverySlot: string, price: decimal }
+  resp 202: { orderId: int64, userId: int64, price: decimal,
+              sku: string, qty: int, deliverySlot: string,
+              status: enum[RESERVING], createdAt: datetime }
+  resp 400: { error: validation }
+
+GET /orders/{id}
+  resp 200: { orderId: int64, ..., status: enum[RESERVING, PAID, COMPENSATING, FAILED, COMPENSATION_FAILED] }
+  resp 403: { error: forbidden }
+```
+
+### 6.5. IDL — Kafka-события (v2)
+
+```yaml
+topic: funds.reserve.command
+  producer: order-service
+  consumers: [billing-service]
+  payload: { orderId, userId, amount }
+
+topic: funds.reserved
+  producer: billing-service
+  consumers: [order-service (order-service-saga)]
+  payload: { orderId, accountId, balance }
+
+topic: funds.reserve.failed
+  producer: billing-service
+  consumers: [order-service (order-service-saga)]
+  payload: { orderId, reason }
+
+topic: stock.reserve.command
+  producer: order-service
+  consumers: [warehouse-service]
+  payload: { orderId, sku, qty }
+
+topic: stock.reserved
+  producer: warehouse-service
+  consumers: [order-service (order-service-saga)]
+  payload: { orderId, sku, qty }
+
+topic: stock.reserve.failed
+  producer: warehouse-service
+  consumers: [order-service (order-service-saga)]
+  payload: { orderId, reason }
+
+topic: courier.reserve.command
+  producer: order-service
+  consumers: [delivery-service]
+  payload: { orderId, slot }
+
+topic: courier.reserved
+  producer: delivery-service
+  consumers: [order-service (order-service-saga)]
+  payload: { orderId, courierId }
+
+topic: courier.reserve.failed
+  producer: delivery-service
+  consumers: [order-service (order-service-saga)]
+  payload: { orderId, reason }
+
+# компенсации
+topic: funds.release.command
+  producer: order-service
+  consumers: [billing-service]
+  payload: { orderId, userId, amount }
+
+topic: funds.released
+  producer: billing-service
+  consumers: [order-service (order-service-saga)]
+  payload: { orderId }
+
+topic: stock.release.command
+  producer: order-service
+  consumers: [warehouse-service]
+  payload: { orderId, sku, qty }
+
+topic: stock.released
+  producer: warehouse-service
+  consumers: [order-service (order-service-saga)]
+  payload: { orderId }
+
+# финал
+topic: order.paid
+  producer: order-service
+  consumers: [notification-service]
+  payload: { orderId, userId, price }
+
+topic: order.failed
+  producer: order-service
+  consumers: [notification-service]
+  payload: { orderId, userId, price, reason }
+```
+
+**Плюсы:** слабая связность (каждый сервис знает только свои команды);
+явная компенсация в одном месте; состояние саги переживает рестарт;
+идемпотентность на уровне шагов (`SagaState.step`); легко добавить
+новый шаг (новая команда/событие + ветка в `SagaOrchestrator`).
+**Минусы:** eventual consistency; сложнее отладка (нужен tracing по
+`orderId`); риск «зависания» без таймаута (см. `docs/limitations.md` → п. 3);
+оркестратор знает про всех участников.
+
+---
+
+## 7. Итоговая таблица выбора
+
+| Критерий | В1 HTTP | В2 HTTP+Kafka | В3 Event Collab | В4 Гибрид | В5 Saga |
+|---|---|---|---|---|---|
+| Слабая связность | ✗ | ~ | ✓ | ~ | ~ |
+| Отказоустойчивость | ✗ | ~ | ✓ | ~ | ✓ |
+| Компенсации | ✗ | ✗ | ✗ | ✗ | **✓** |
+| Простота отладки | ✓ | ~ | ✗ | ~ | ~ |
+| Консистентность баланса | ✓ | ~ | ~ | ✓ | ~ |
+| Масштабируемость | ✗ | ~ | ✓ | ~ | ✓ |
+| Соответствие ДЗ №1 (распределённые транзакции) | ✗ | ✗ | ✗ | ✗ | **✓** |
+| Соответствие ДЗ №2 (идемпотентность) | ~ | ~ | ~ | ~ | **✓** (Idempotency-Key) |
+
+**Выбрано:**
+
+- **v1 (Event Collaboration)** — как исторический режим, демонстрирующий
+  слабую связность и идемпотентность consumer'ов.
+- **v2 (Saga Orchestration)** — как основной режим, отвечающий цели
+  ДЗ №1 «реализовать механизм распределённой транзакции» с компенсациями.
+  Идемпотентность HTTP (`Idempotency-Key`) закрывает ДЗ №2.
+
+Реализация — в основном коде проекта: `SagaOrchestrator` (order-service),
+`SagaFundsListener` (billing), `StockEventsListener` (warehouse),
+`CourierEventsListener` (delivery), `common-events/SagaEvents.java`,
+`docs/patterns.md`.

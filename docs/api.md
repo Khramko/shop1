@@ -120,15 +120,20 @@
 
 ### `POST /orders`
 
-Создать заказ. Возвращает `202 Accepted` — фактическое списание и переход в `PAID`/`FAILED` происходят асинхронно через Kafka (`order.created` → billing → `funds.withdrawn`/`funds.withdraw.failed` → order-service).
+Создать заказ. Возвращает `202 Accepted` — фактическое списание и переход в `PAID`/`FAILED` происходят асинхронно через Saga (Kafka): `funds.reserve.command` → `funds.reserved` → `stock.reserve.command` → `stock.reserved` → `courier.reserve.command` → `courier.reserved` → `order.paid`. При провале любого шага запускается компенсация (`compensating` → `failed`).
 
 **Request:**
 
 ```json
-{ "price": 300 }
+{
+  "price": 300,
+  "sku": "SKU-001",
+  "qty": 2,
+  "deliverySlot": "2026-11-16T10:00"
+}
 ```
 
-Валидация: `price` — `@NotNull @DecimalMin("0.01")`.
+Валидация: `price` — `@NotNull @DecimalMin("0.01")`. В режиме Saga (`saga.enabled=true`, по умолчанию) поля `sku`, `qty`, `deliverySlot` обязательны — иначе `400 validation`. В режиме v1 (`saga.enabled=false`) достаточно `price`.
 
 **Response `202 Accepted`:**
 
@@ -136,10 +141,37 @@
 {
   "orderId": 3,
   "userId": 5,
-  "price": 300,
-  "status": "NEW",
+  "price": 300.00,
+  "sku": "SKU-001",
+  "qty": 2,
+  "deliverySlot": "2026-11-16T10:00",
+  "status": "RESERVING",
   "createdAt": "2026-11-12T15:46:27.088427395Z"
 }
+```
+
+#### Идемпотентность
+
+Если передан заголовок `Idempotency-Key: <string>`, вызов становится идемпотентным:
+
+- Первый вызов с данным ключом создаёт заказ и сохраняет ответ в `idempotency_keys`.
+- Повторный вызов с **тем же** ключом (и тем же `userId`) возвращает **сохранённый** ответ (тот же `orderId`, тот же `status`) с заголовком `X-Idempotent-Replay: true`. Новый заказ **не создаётся**.
+- Ключ уникален в рамках пользователя: `UNIQUE(user_id, idempotency_key)`.
+- TTL ключа — 24 часа, затем удаляется фоновой задачей.
+
+Без заголовка `Idempotency-Key` каждый вызов создаёт новый заказ (поведение обратной совместимости).
+
+**Пример:**
+
+```bash
+curl -X POST "$BASE/orders" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 7f3c1a9e-2b4d-4e8f-9a1c-5d6e7f8a9b0c" \
+  -d '{"sku":"SKU-001","qty":1,"deliverySlot":"2026-11-16T10:00","price":100}'
+# → 202 {"orderId":42,...,"status":"RESERVING"}
+# повтор с тем же ключом:
+# → 202 {"orderId":42,...} + X-Idempotent-Replay: true
 ```
 
 ### `GET /orders/{id}`
@@ -153,12 +185,23 @@
   "orderId": 3,
   "userId": 5,
   "price": 300.00,
+  "sku": "SKU-001",
+  "qty": 2,
+  "deliverySlot": "2026-11-16T10:00",
   "status": "PAID",
   "createdAt": "2026-11-12T15:46:27.088427395Z"
 }
 ```
 
-`status` ∈ `NEW | PAID | FAILED`. `NEW` — заказ создан, событие `order.created` опубликовано, ответа от billing ещё нет. `PAID` — получен `funds.withdrawn`. `FAILED` — получен `funds.withdraw.failed` (`INSUFFICIENT_FUNDS` или `NO_ACCOUNT`).
+`status` — состояние заказа. В режиме Saga (`saga.enabled=true`, по умолчанию):
+
+- `RESERVING` — сага стартовала, идёт последовательный резерв funds → stock → courier.
+- `PAID` — все три шага успешны, получен `courier.reserved`, опубликован `order.paid`.
+- `COMPENSATING` — один из шагов провалился, идёт откат уже зарезервированных ресурсов.
+- `FAILED` — компенсация завершена, заказ отменён, опубликован `order.failed`.
+- `COMPENSATION_FAILED` — компенсация не удалась (например, `funds.release.failed`), требуется ручное вмешательство.
+
+В режиме v1 (`saga.enabled=false`) статусы: `NEW → PAID | FAILED` (по событиям `funds.withdrawn` / `funds.withdraw.failed`).
 
 **Response `403 Forbidden`** — заказ принадлежит другому пользователю.
 
@@ -233,8 +276,8 @@
 | `PUT` | `/api/profile` | user | Bearer | `200 {id, name, email}` |
 | `GET` | `/billing/accounts/me` | billing | Bearer | `200 {accountId, userId, balance}` |
 | `POST` | `/billing/accounts/me/deposit` | billing | Bearer | `200 {accountId, userId, balance}` |
-| `POST` | `/orders` | order | Bearer | `202 {orderId, status: NEW}` |
-| `GET` | `/orders/{id}` | order | Bearer | `200 {orderId, status: NEW/PAID/FAILED}` |
+| `POST` | `/orders` | order | Bearer | `202 {orderId, status: RESERVING}` (saga) / `NEW` (v1) |
+| `GET` | `/orders/{id}` | order | Bearer | `200 {orderId, status: RESERVING/PAID/COMPENSATING/FAILED/COMPENSATION_FAILED}` |
 | `GET` | `/orders` | order | Bearer | `200 [OrderResponse]` |
 | `GET` | `/notifications` | notification | Bearer | `200 [NotificationResponse]` |
 | `GET` | `/health` | все | — | `200 {status, service}` |
@@ -267,10 +310,10 @@ curl -s -X POST "$BASE/billing/accounts/me/deposit" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"amount":1000}'
 
-# 4. Успешный заказ
+# 4. Успешный заказ (saga: funds → stock → courier)
 OID=$(curl -s -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"price":300}' | jq -r .orderId)
+  -d '{"sku":"SKU-001","qty":2,"deliverySlot":"2026-11-16T10:00","price":300}' | jq -r .orderId)
 for i in $(seq 1 20); do
   S=$(curl -s "$BASE/orders/$OID" -H "Authorization: Bearer $TOKEN" | jq -r .status)
   [ "$S" = "PAID" ] && break
@@ -278,10 +321,10 @@ for i in $(seq 1 20); do
 done
 echo "order $OID → $S"        # PAID
 
-# 5. Неуспешный заказ
+# 5. Неуспешный заказ (нехватка средств)
 OID2=$(curl -s -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"price":5000}' | jq -r .orderId)
+  -d '{"sku":"SKU-001","qty":1,"deliverySlot":"2026-11-16T12:00","price":5000}' | jq -r .orderId)
 for i in $(seq 1 20); do
   S2=$(curl -s "$BASE/orders/$OID2" -H "Authorization: Bearer $TOKEN" | jq -r .status)
   [ "$S2" = "FAILED" ] && break
@@ -289,12 +332,24 @@ for i in $(seq 1 20); do
 done
 echo "order $OID2 → $S2"       # FAILED
 
-# 6. Итоговое состояние
+# 6. Идемпотентность
+IDEM_KEY="demo-$(date +%s)"
+curl -s -X POST "$BASE/orders" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $IDEM_KEY" \
+  -d '{"sku":"SKU-001","qty":1,"deliverySlot":"2026-11-17T10:00","price":100}'
+curl -s -X POST "$BASE/orders" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $IDEM_KEY" \
+  -d '{"sku":"SKU-001","qty":1,"deliverySlot":"2026-11-17T10:00","price":100}' \
+  -i | grep -i X-Idempotent-Replay     # → X-Idempotent-Replay: true
+
+# 7. Итоговое состояние
 curl -s "$BASE/billing/accounts/me" -H "Authorization: Bearer $TOKEN"   # balance: 700
 curl -s "$BASE/notifications" -H "Authorization: Bearer $TOKEN"         # HAPPY + ANGRY
 ```
 
-Тот же сценарий автоматизирован в [`etc/shop-stream-app.postman_collection.json`](../etc/shop-stream-app.postman_collection.json), запуск — `./run-newman.sh`.
+Тот же сценарий автоматизирован в [`etc/shop-stream-app.postman_collection.json`](../etc/shop-stream-app.postman_collection.json) и [`etc/shop-saga.postman_collection.json`](../etc/shop-saga.postman_collection.json), запуск — `./run-newman.sh`.
 
 ---
 
@@ -313,10 +368,15 @@ curl -s "$BASE/notifications" -H "Authorization: Bearer $TOKEN"         # HAPPY 
   "orderId": 3,
   "userId": 5,
   "price": 300.00,
+  "sku": "SKU-001",
+  "qty": 2,
+  "deliverySlot": "2026-11-16T10:00",
   "status": "PAID",
   "createdAt": "2026-11-12T15:46:27.088427395Z"
 }
 ```
+
+`status` ∈ `RESERVING | PAID | COMPENSATING | FAILED | COMPENSATION_FAILED` (saga) или `NEW | PAID | FAILED` (v1). `sku`, `qty`, `deliverySlot` — `null` для v1-заказов.
 
 ### `Notification`
 
@@ -369,4 +429,4 @@ Payload:
 
 ## Зарезервированные эндпоинты (legacy)
 
-В `user-service` исторически были `/api/users/**` (CRUD) — в текущей версии закрыты `denyAll` для обычных пользователей. Legacy-коллекция `etc/collection.json` помечена deprecated; актуальная — `etc/shop-stream-app.postman_collection.json`.
+В `user-service` исторически были `/api/users/**` (CRUD) — в текущей версии закрыты `denyAll` для обычных пользователей. Legacy-коллекция `etc/collection.json` помечена deprecated; актуальные — `etc/shop-stream-app.postman_collection.json` и `etc/shop-saga.postman_collection.json`.

@@ -2,7 +2,7 @@
   "info": {
     "name": "Shop Saga (Distributed Transactions)",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Saga: happy path, провал billing, провал warehouse (компенсация funds), провал delivery (компенсация stock+funds). baseUrl = http://arch.homework."
+    "description": "Saga: happy path, провал billing, провал warehouse (компенсация funds), провал delivery (компенсация stock+funds), идемпотентность POST /orders через Idempotency-Key. baseUrl = http://arch.homework."
   },
   "variable": [
     { "key": "baseUrl", "value": "http://arch.homework", "type": "default" }
@@ -295,7 +295,10 @@
               "const rnd = Math.random().toString(36).substring(2, 10);",
               "pm.collectionVariables.set('idemKey', `idem-${rnd}`);",
               "pm.collectionVariables.set('idemBody', JSON.stringify({",
-              "  sku: 'SKU-001', qty: 1, deliverySlot: pm.collectionVariables.get('slotA'), price: 100",
+              "  sku: 'SKU-001',",
+              "  qty: 1,",
+              "  deliverySlot: pm.collectionVariables.get('slotA'),",
+              "  price: 100",
               "}));"
             ]
           }
@@ -324,11 +327,7 @@
           { "key": "Idempotency-Key", "value": "{{idemKey}}" }
         ],
         "body": { "mode": "raw", "raw": "{{idemBody}}" },
-        "url": {
-          "raw": "{{baseUrl}}/orders",
-          "host": ["{{baseUrl}}"],
-          "path": ["orders"]
-        }
+        "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] }
       }
     },
     {
@@ -359,11 +358,7 @@
           { "key": "Idempotency-Key", "value": "{{idemKey}}" }
         ],
         "body": { "mode": "raw", "raw": "{{idemBody}}" },
-        "url": {
-          "raw": "{{baseUrl}}/orders",
-          "host": ["{{baseUrl}}"],
-          "path": ["orders"]
-        }
+        "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] }
       }
     },
     {
@@ -388,11 +383,7 @@
       "request": {
         "method": "GET",
         "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-        "url": {
-          "raw": "{{baseUrl}}/orders/{{orderEId}}",
-          "host": ["{{baseUrl}}"],
-          "path": ["orders", "{{orderEId}}"]
-        }
+        "url": { "raw": "{{baseUrl}}/orders/{{orderEId}}", "host": ["{{baseUrl}}"], "path": ["orders","{{orderEId}}"] }
       }
     }
   ]
