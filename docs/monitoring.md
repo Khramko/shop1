@@ -1,6 +1,6 @@
 # 📊 Мониторинг
 
-Все 4 сервиса экспортируют метрики в формате **Prometheus** через `/actuator/prometheus`. Логи — **JSON** (`logstash-logback-encoder`) с MDC-полями. В k8s опционально ставится `kube-prometheus-stack` (Prometheus + Grafana + Alertmanager). Отдельного `ServiceMonitor` в манифестах нет — предполагается либо статический scrape-конфиг, либо `additionalScrapeConfigs` в values Prometheus (см. ниже).
+Все **6 сервисов** экспортируют метрики в формате **Prometheus** через `/actuator/prometheus`. Логи — **JSON** (`logstash-logback-encoder`) с MDC-полями. В k8s опционально ставится `kube-prometheus-stack` (Prometheus + Grafana + Alertmanager). Отдельного `ServiceMonitor` в манифестах нет — предполагается либо статический scrape-конфиг, либо `additionalScrapeConfigs` в values Prometheus (см. ниже).
 
 ---
 
@@ -77,6 +77,31 @@ management:
 
 Это позволяет фильтровать в Loki/ELK по `service`, `http_status`, `request_id` (склейка запросов одного пользователя).
 
+### Saga-логи
+
+`SagaOrchestrator` пишет в лог каждый переход состояния:
+
+```json
+{
+  "@timestamp": "2026-11-14T17:01:26.322Z",
+  "level": "INFO",
+  "service": "order-service",
+  "message": "Saga[42] funds reserved → reserve stock",
+  "order_id": 42,
+  "step": "FUNDS_RESERVED"
+}
+```
+
+`StockEventsListener` / `CourierEventsListener` / `SagaFundsListener` — аналогично:
+
+```json
+{ "message": "Reserved order=42 sku=SKU-001 qty=2 left=98", "order_id": 42 }
+{ "message": "Reserved courier=1 slot=2026-11-16T10:00 order=42", "order_id": 42 }
+{ "message": "Reserved funds order=42 amount=300 balance=700", "order_id": 42 }
+```
+
+По `order_id` можно склеить всю историю саги в Loki/ELK (если они развёрнуты).
+
 ---
 
 ## Метрики
@@ -107,6 +132,48 @@ management:
 
 `process_cpu_usage`, `process_uptime_seconds`, `system_cpu_usage`, `system_load_average_1m`.
 
+### Saga-метрики (не реализованы, но нужны)
+
+Сейчас бизнес-состояние саги видно только через логи и SQL к `saga_states`. Для продакшена стоит добавить:
+
+| Метрика | Где инкрементить | Зачем |
+|---|---|---|
+| `orders_created_total` | `OrderService.createSaga` | RPS создания заказов |
+| `orders_paid_total` | `SagaOrchestrator.onCourierReserved` | успешные заказы |
+| `orders_failed_total{reason}` | `SagaOrchestrator.failSaga`, `compensate` | провалы по причинам (`FUNDS`, `STOCK`, `COURIER`) |
+| `orders_compensated_total{step}` | `SagaOrchestrator.compensate` | сколько откатов по шагам |
+| `saga_stuck_total{step}` | планировщик таймаута (не реализован) | саги, «зависшие» в `STARTED`/`FUNDS_RESERVED`/`STOCK_RESERVED` |
+| `funds_reserved_total` / `funds_released_total` | `SagaFundsListener` | объём резервов/возвратов |
+| `stock_reserved_total` / `stock_released_total` | `StockEventsListener` | объём резервов/возвратов |
+| `courier_reserved_total` / `courier_released_total` | `CourierEventsListener` | объём резервов/возвратов |
+
+Пример добавления:
+
+```java
+// SagaOrchestrator
+private final MeterRegistry meter;
+
+public void onCourierReserved(CourierReservedEvent e) {
+    // ...
+    meter.counter("orders.paid").increment();
+}
+```
+
+Это позволит в Grafana строить:
+
+```promql
+# RPS успешных заказов
+sum(rate(orders_paid_total[5m]))
+
+# Доля провалов
+sum(rate(orders_failed_total[5m])) / sum(rate(orders_created_total[5m]))
+
+# Застрявшие саги
+sum by (step) (saga_stuck_total)
+```
+
+См. [`docs/limitations.md`](limitations.md) → п. 9.
+
 ---
 
 ## Установка Prometheus + Grafana (k8s)
@@ -120,7 +187,7 @@ helm install prometheus prometheus-community/kube-prometheus-stack \
   --create-namespace
 ```
 
-По умолчанию `kube-prometheus-stack` собирает метрики подов с аннотацией `prometheus.io/scrape: "true"`. В текущих `deployment.yaml` такой аннотации нет, поэтому нужен либо `additionalScrapeConfigs`, либо `PodMonitor`. Минимальный `additionalScrapeConfigs`:
+По умолчанию `kube-prometheus-stack` собирает метрики подов с аннотацией `prometheus.io/scrape: "true"`. В текущих `deployment.yaml` такой аннотации нет, поэтому нужен либо `additionalScrapeConfigs`, либо `PodMonitor`. Минимальный `additionalScrapeConfigs` для 6 сервисов:
 
 ```yaml
 # prometheus-values.yaml
@@ -135,16 +202,35 @@ prometheus:
               names: [shop]
         relabel_configs:
           - source_labels: [__meta_kubernetes_pod_label_app]
-            regex: (user-service|billing-service|order-service|notification-service)
+            regex: (user-service|billing-service|order-service|notification-service|warehouse-service|delivery-service)
             action: keep
-          - source_labels: [__meta_kubernetes_pod_ip]
-            target_label: __address__
-            replacement: $1:8081
           - source_labels: [__meta_kubernetes_pod_label_app]
             target_label: application
 ```
 
-> Порт разный у сервисов (8081–8084), поэтому либо 4 отдельных `job_name`, либо `targetPort` из `Service`. Проще — 4 `job_name` с явным `static_configs` на `shop-<service>.shop.svc.cluster.local:<port>`.
+> Порт разный у сервисов (8081–8086), поэтому либо 6 отдельных `job_name`, либо `targetPort` из `Service`. Проще — 6 `job_name` с явным `static_configs` на `shop-<service>.shop.svc.cluster.local:<port>`:
+
+```yaml
+    additionalScrapeConfigs:
+      - job_name: shop-user-service
+        static_configs:
+          - targets: ['user-service.shop.svc.cluster.local:8081']
+      - job_name: shop-billing-service
+        static_configs:
+          - targets: ['billing-service.shop.svc.cluster.local:8082']
+      - job_name: shop-order-service
+        static_configs:
+          - targets: ['order-service.shop.svc.cluster.local:8083']
+      - job_name: shop-notification-service
+        static_configs:
+          - targets: ['notification-service.shop.svc.cluster.local:8084']
+      - job_name: shop-warehouse-service
+        static_configs:
+          - targets: ['warehouse-service.shop.svc.cluster.local:8085']
+      - job_name: shop-delivery-service
+        static_configs:
+          - targets: ['delivery-service.shop.svc.cluster.local:8086']
+```
 
 Переустановка:
 
@@ -159,7 +245,7 @@ helm upgrade prometheus prometheus-community/kube-prometheus-stack \
 kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
 ```
 
-Открыть `http://localhost:9090/targets` — все 4 сервиса в статусе **UP**.
+Открыть `http://localhost:9090/targets` — все 6 сервисов в статусе **UP**.
 
 ### Grafana
 
@@ -213,10 +299,18 @@ sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="shop", container
 sum by (pod) (container_memory_working_set_bytes{namespace="shop", container!=""})
 ```
 
-### Kafka consumer lag
+### Kafka consumer lag по группам
 
 ```promql
 sum by (group, topic) (kafka_consumer_fetch_manager_records_lag)
+```
+
+Особенно важно для `order-service-saga` — там 12 топиков:
+
+```promql
+sum by (topic) (
+  kafka_consumer_fetch_manager_records_lag{group="order-service-saga"}
+)
 ```
 
 Если `lag` растёт и не уменьшается — consumer завис или упал.
@@ -266,6 +360,13 @@ sum by (group, topic) (kafka_consumer_fetch_manager_records_lag)
 ```
 Условие `IS ABOVE 1000`, Evaluation `1m`, Pending `5m`.
 
+**Saga stuck (если метрика добавлена):**
+
+```promql
+sum by (step) (saga_stuck_total) > 10
+```
+Условие `IS ABOVE 10`, Evaluation `1m`, Pending `5m`.
+
 ### Через PrometheusRule (k8s)
 
 ```yaml
@@ -296,7 +397,15 @@ spec:
           labels: { severity: warning }
           annotations:
             summary: "consumer {{ $labels.group }} lag on {{ $labels.topic }} > 1000"
+        - alert: ShopSagaStuck
+          expr: sum by (step) (saga_stuck_total) > 10
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "saga stuck in {{ $labels.step }} > 10"
 ```
+
+> `ShopSagaStuck` работает только если реализован планировщик таймаута (см. `docs/limitations.md` → п. 3). Сейчас метрики нет.
 
 ---
 
@@ -307,23 +416,69 @@ sudo snap install hey
 hey -z 5m -c 5 -host "arch.homework" http://localhost:8080/health
 ```
 
-Во время прогона смотреть в Grafana:
+Для сквозной нагрузки (регистрация → deposit → заказ) используйте Postman/Newman с `-n 100`:
+
+```bash
+npx newman run etc/shop-saga.postman_collection.json \
+  --environment <tmp> -n 100 --delay-request 100
+```
+
+Это 100 регистраций + 100 deposit + 100+ заказов (happy + fail + idempotency). Смотреть в Grafana:
 
 - `http_server_requests_seconds` p95/p99 — не деградирует ли;
 - `hikaricp_connections_active` — не упирается ли в пул (по умолчанию 10);
 - `jvm_gc_pause_seconds` — не растут ли паузы;
-- `kafka_consumer_fetch_manager_records_lag` — успевают ли consumer'ы.
+- `kafka_consumer_fetch_manager_records_lag{group="order-service-saga"}` — успевает ли оркестратор;
+- `kafka_consumer_fetch_manager_records_lag{group="warehouse-service"}` / `delivery-service` — успевают ли участники.
 
-Для сквозной нагрузки (регистрация → заказ) используйте Postman/Newman с `-n 100` (Newman не умеет в открытую модель, но `-n 100` прогонит 100 итераций коллекции — это 100 регистраций + 100 deposit + 200 заказов).
+---
+
+## Проверка saga-состояния через БД
+
+Метрик саги пока нет, поэтому — SQL:
+
+```bash
+# распределение заказов по шагам саги
+kubectl exec -n shop postgres-0 -- \
+  psql -U app_user -d order_db -c \
+  "SELECT step, count(*) FROM saga_states GROUP BY step ORDER BY count(*) DESC;"
+
+# заказы, «зависшие» в промежуточных шагах > 5 минут
+kubectl exec -n shop postgres-0 -- \
+  psql -U app_user -d order_db -c \
+  "SELECT order_id, step, failure_reason, updated_at
+   FROM saga_states
+   WHERE step IN ('STARTED','FUNDS_RESERVED','STOCK_RESERVED')
+     AND updated_at < now() - interval '5 minutes'
+   ORDER BY updated_at;"
+
+# состояние резервов в billing
+kubectl exec -n shop postgres-0 -- \
+  psql -U app_user -d billing_db -c \
+  "SELECT count(*), sum(amount) FROM reserved_funds;"
+
+# состояние склада
+kubectl exec -n shop postgres-0 -- \
+  psql -U app_user -d warehouse_db -c \
+  "SELECT sku, qty_available, qty_reserved FROM stock ORDER BY sku;"
+
+# состояние курьеров (сколько слотов RESERVED)
+kubectl exec -n shop postgres-0 -- \
+  psql -U app_user -d delivery_db -c \
+  "SELECT status, count(*) FROM courier_slots GROUP BY status;"
+```
+
+Эти запросы — замена отсутствующим бизнес-метрикам. В продакшене — вынести в экспортер (postgres_exporter + custom queries) и добавить в Grafana.
 
 ---
 
 ## Что НЕ покрыто
 
-- **Distributed tracing** (OpenTelemetry / Jaeger) — не подключён. Склейка событий одного заказа между сервисами возможна только по `orderId` в логах и по `request_id` в рамках одного HTTP-запроса.
+- **Distributed tracing** (OpenTelemetry / Jaeger) — не подключён. Склейка событий одного заказа между 6 сервисами возможна только по `orderId` в логах и по `request_id` в рамках одного HTTP-запроса.
 - **Централизованные логи** (Loki / ELK) — не развёрнуты. JSON-логи пишутся в stdout, доступны через `kubectl logs`.
 - **`ServiceMonitor`** — в манифестах отсутствует; scrape настраивается через `additionalScrapeConfigs` (см. выше).
 - **Grafana-дашборды** — JSON-дашборд не приложен к репозиторию. Панели из «Полезные PromQL» собираются вручную.
-- **Бизнес-метрики** — нет счётчиков `orders_created_total`, `orders_paid_total`, `orders_failed_total`, `funds_withdrawn_total`. Сейчас бизнес-состояние видно только через `http_server_requests_seconds_count{uri="/orders"}` и через логи. Для продакшена стоит добавить `MeterRegistry.counter("orders.paid")` в `OrderEventPublisher` / listener'ы.
+- **Бизнес-метрики** — нет счётчиков `orders_paid_total`, `orders_failed_total`, `orders_compensated_total`, `saga_stuck_total`, `funds_reserved_total` и т.п. Сейчас бизнес-состояние видно только через `http_server_requests_seconds_count{uri="/orders"}` и через SQL к `saga_states`.
+- **Postgres exporter** — нет `postgres_exporter`, метрики БД (connections, locks, replication lag) недоступны.
 
-Эти пробелы отражены в [`ARCHITECTURE.md`](../ARCHITECTURE.md) → «Известные ограничения».
+Эти пробелы отражены в [`docs/limitations.md`](limitations.md) → п. 7–9, 17.
