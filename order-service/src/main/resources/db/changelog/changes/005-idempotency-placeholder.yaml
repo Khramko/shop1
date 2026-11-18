@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - changeSet:
+      id: 005-idempotency-placeholder
+      author: shop
+      changes:
+        - dropNotNullConstraint:
+            tableName: idempotency_keys
+            columnName: order_id
+            columnDataType: BIGINT
+        - dropNotNullConstraint:
+            tableName: idempotency_keys
+            columnName: response_body
+            columnDataType: TEXT
+        - dropNotNullConstraint:
+            tableName: idempotency_keys
+            columnName: http_status
+            columnDataType: INT

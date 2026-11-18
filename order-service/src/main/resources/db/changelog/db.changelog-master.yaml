@@ -2,3 +2,5 @@ databaseChangeLog:
   - include: { file: changes/001-create-orders.yaml, relativeToChangelogFile: true }
   - include: { file: changes/002-saga-state.yaml,   relativeToChangelogFile: true }
   - include: { file: changes/003-idempotency-keys.yaml, relativeToChangelogFile: true }
+  - include: { file: changes/004-outbox.yaml, relativeToChangelogFile: true }
+  - include: { file: changes/005-idempotency-placeholder.yaml, relativeToChangelogFile: true }

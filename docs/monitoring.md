@@ -147,6 +147,17 @@ management:
 | `stock_reserved_total` / `stock_released_total` | `StockEventsListener` | объём резервов/возвратов |
 | `courier_reserved_total` / `courier_released_total` | `CourierEventsListener` | объём резервов/возвратов |
 
+### Outbox и идемпотентность (рекомендуется добавить)
+
+| Метрика | Где инкрементить | Зачем |
+|---|---|---|
+| `outbox.pending.count` | гейдж в `OutboxPublisher` | сколько событий ждёт публикации |
+| `outbox.dead_letter.count` | гейдж по `status='DEAD_LETTER'` | алерт при > 0 |
+| `outbox.publish.age.seconds` | возраст старейшей `PENDING` | задержка публикации |
+| `idempotency.replay.total` | счётчик в `replay(k)` | частота повторов |
+| `idempotency.conflict.total` | счётчик в `409 idempotency_in_progress` | гонки |
+| `idempotency.placeholder.stuck.count` | SQL: `order_id IS NULL AND created_at < now() - 5 min` | зависшие placeholder'ы |
+
 Пример добавления:
 
 ```java

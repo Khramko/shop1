@@ -318,7 +318,14 @@ Kafka даёт **at-least-once**. Каждый consumer защищён табл�
 
 См. [`docs/limitations.md`](limitations.md). Кратко:
 
-1. Нет Outbox pattern (событие может потеряться между `save()` и `kafka.send()`).
+1. - **At-least-once, не exactly-once.** Outbox закрывает потерю события между
+     `save()` и `kafka.send()`, но дубли возможны при падении между `send()` и
+     `save(PUBLISHED)` в `OutboxPublisher`. Для команд саги безопасно
+     (consumer'ы идемпотентны), для `ORDER_PAID`/`ORDER_FAILED` — notification
+     создаст дубль.
+   - **Задержка публикации** = `outbox.publisher.delay-ms` (2 с по умолчанию).
+      Happy path саги добавляет ~6–8 с. Для тестов `OUTBOX_DELAY_MS=300`.
+   - **`awaitFilled` блокирует поток** до 5 с (`Thread.sleep(50)`). Для прода — `@Async`.
 2. Нет retry / DLQ (consumer при исключении ретраит бесконечно).
 3. Нет таймаута в SagaOrchestrator (при потере ответа сага «зависает» в `FUNDS_RESERVED`/`STOCK_RESERVED`).
 4. Kafka single-node (`replication.factor=1`).

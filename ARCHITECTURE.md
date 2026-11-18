@@ -57,7 +57,14 @@ Kafka гарантирует at-least-once delivery, поэтому любой c
 
 ## Известные ограничения
 
-- **Нет Outbox pattern.** Публикация в Kafka и коммит транзакции в БД не атомарны: при сбое между `save()` и `kafka.send()` событие может потеряться. Для ДЗ («сервисы не падают») это допустимо.
+- **At-least-once, не exactly-once.** Outbox закрывает потерю события между
+  `save()` и `kafka.send()`, но дубли возможны при падении между `send()` и
+  `save(PUBLISHED)` в `OutboxPublisher`. Для команд саги безопасно
+  (consumer'ы идемпотентны), для `ORDER_PAID`/`ORDER_FAILED` — notification
+  создаст дубль.
+- **Задержка публикации** = `outbox.publisher.delay-ms` (2 с по умолчанию).
+  Happy path саги добавляет ~6–8 с. Для тестов `OUTBOX_DELAY_MS=300`.
+- **`awaitFilled` блокирует поток** до 5 с (`Thread.sleep(50)`). Для прода — `@Async`.
 - **Нет retry / DLQ.** Consumer при исключении ретраит бесконечно (Spring Kafka default). Для продакшена нужен `DefaultErrorHandler` + dead-letter topic.
 - **Нет saga-компенсации.** Если funds.withdrawn получен, а order.paid потерян — заказ навсегда останется NEW при списанных деньгах.
 - **Kafka = single-node (KRaft).** Для продакшена нужен кластер ≥3 брокеров и replication factor ≥2.

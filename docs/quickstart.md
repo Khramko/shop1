@@ -100,7 +100,7 @@ docker compose down -v         # остановить и удалить тома
 
 ```bash
 docker compose build order-service
-docker compose up -d order-service
+OUTBOX_DELAY_MS=300 docker compose up -d --build order-service
 ```
 
 ### 6. Проверка `warehouse-service` / `delivery-service` отдельно

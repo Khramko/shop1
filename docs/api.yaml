@@ -104,6 +104,15 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Order' }
         '400': { description: Validation error }
+        '409':
+          description: Idempotency-Key уже используется другим запросом
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, enum: [ idempotency_in_progress ] }
+                  details: { type: string }
     get:
       summary: Список заказов текущего пользователя
       tags: [Order]

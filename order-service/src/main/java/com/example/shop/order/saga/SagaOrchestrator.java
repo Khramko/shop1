@@ -4,6 +4,7 @@ import com.example.shop.common.events.SagaEvents.*;
 import com.example.shop.common.events.Topics;
 import com.example.shop.order.model.Order;
 import com.example.shop.order.model.SagaState;
+import com.example.shop.order.outbox.OutboxService;
 import com.example.shop.order.repository.OrderRepository;
 import com.example.shop.order.repository.SagaStateRepository;
 import org.slf4j.Logger;
@@ -20,16 +21,17 @@ public class SagaOrchestrator {
     private final OrderRepository orderRepo;
     private final SagaStateRepository sagaRepo;
     private final KafkaTemplate<String, Object> kafka;
+    private final OutboxService outbox;                  // ← новое
 
     public SagaOrchestrator(OrderRepository orderRepo, SagaStateRepository sagaRepo,
-                            KafkaTemplate<String, Object> kafka) {
-        this.orderRepo = orderRepo; this.sagaRepo = sagaRepo; this.kafka = kafka;
+                            KafkaTemplate<String, Object> kafka,
+                            OutboxService outbox) {      // ← новое
+        this.orderRepo = orderRepo; this.sagaRepo = sagaRepo;
+        this.kafka = kafka; this.outbox = outbox;
     }
 
     private void send(String topic, Long orderId, Object payload) {
-        kafka.send(topic, orderId.toString(), payload).whenComplete((r, ex) -> {
-            if (ex != null) log.error("Kafka send failed topic={}", topic, ex);
-        });
+        outbox.enqueue("Order", orderId.toString(), topic, topic, payload);
     }
 
     // --- Callbacks from billing ---
@@ -104,9 +106,9 @@ public class SagaOrchestrator {
         o.setStatus(Order.Status.PAID);
         orderRepo.save(o);
         log.info("Saga[{}] DONE → order PAID", e.orderId());
-        // v1 событие для notification
-        kafka.send(Topics.ORDER_PAID, e.orderId().toString(),
-            new com.example.shop.common.events.OrderPaidEvent(e.orderId(), o.getUserId(), o.getPrice()));
+        outbox.enqueue("Order", e.orderId().toString(), "OrderPaid",
+                Topics.ORDER_PAID,
+                new com.example.shop.common.events.OrderPaidEvent(e.orderId(), o.getUserId(), o.getPrice()));
     }
 
     @KafkaListener(topics = Topics.COURIER_RESERVE_FAILED, groupId = "order-service-saga",
@@ -151,9 +153,10 @@ public class SagaOrchestrator {
         o.setStatus(Order.Status.FAILED);
         orderRepo.save(o);
         log.info("Saga[{}] FAILED after compensation", e.orderId());
-        kafka.send(Topics.ORDER_FAILED, e.orderId().toString(),
-            new com.example.shop.common.events.OrderFailedEvent(
-                e.orderId(), o.getUserId(), o.getPrice(), st.getFailureReason()));
+        outbox.enqueue("Order", e.orderId().toString(), "OrderFailed",
+                Topics.ORDER_FAILED,
+                new com.example.shop.common.events.OrderFailedEvent(
+                        e.orderId(), o.getUserId(), o.getPrice(), st.getFailureReason()));
     }
 
     @KafkaListener(topics = Topics.STOCK_RELEASE_FAILED, groupId = "order-service-saga",
@@ -186,8 +189,9 @@ public class SagaOrchestrator {
         st.setUpdatedAt(java.time.Instant.now()); sagaRepo.save(st);
         Order o = orderRepo.findById(orderId).orElseThrow();
         o.setStatus(Order.Status.FAILED); orderRepo.save(o);
-        kafka.send(Topics.ORDER_FAILED, orderId.toString(),
-            new com.example.shop.common.events.OrderFailedEvent(orderId, o.getUserId(), o.getPrice(), reason));
+        outbox.enqueue("Order", orderId.toString(), "OrderFailed",
+                Topics.ORDER_FAILED,
+                new com.example.shop.common.events.OrderFailedEvent(orderId, o.getUserId(), o.getPrice(), reason));
     }
 
     private void compensate(Long orderId, String reason, SagaState.Step doneStep) {

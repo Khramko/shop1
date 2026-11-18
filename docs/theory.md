@@ -493,6 +493,8 @@ topic: order.failed
   consumers: [notification-service]
   payload: { orderId, userId, price, reason }
 ```
+> Все команды из `order-service` публикуются через Transactional Outbox
+> (`outbox`-таблица + `OutboxPublisher`), см. [`docs/outbox.md`](outbox.md).
 
 **Плюсы:** слабая связность (каждый сервис знает только свои команды);
 явная компенсация в одном месте; состояние саги переживает рестарт;

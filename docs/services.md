@@ -46,9 +46,11 @@
   - `orders (id, user_id, price NUMERIC(19,2), sku, qty, delivery_slot, status VARCHAR(32), created_at)` + индекс `idx_orders_user_id`.
   - `saga_states (order_id PK, step, failure_reason, updated_at)` — состояние оркестратора.
   - `idempotency_keys (id, user_id, idempotency_key, order_id, response_body, http_status, created_at)` + `UNIQUE(user_id, idempotency_key)` — идемпотентность `POST /orders`.
+    `order_id`, `response_body`, `http_status` **nullable** (placeholder-схема, миграция `005`).
+  - `outbox (id, aggregate_type, aggregate_id, event_type, topic, payload TEXT, status PENDING|FAILED|PUBLISHED|DEAD_LETTER, retry_count, created_at, published_at)` — Transactional Outbox.
 - **Публикует:**
   - **v1:** `order.created`, `order.paid`, `order.failed`.
-  - **saga:** `order.saga.started`, `funds.reserve.command`, `stock.reserve.command`, `courier.reserve.command`, `funds.release.command`, `stock.release.command`, `courier.release.command`, `order.paid`, `order.failed`.
+  - **saga:** все команды и `order.paid`/`order.failed` идут **через `outbox`** (Transactional Outbox), не напрямую `kafka.send`.
 - **Подписан:**
   - **v1 (groupId `order-service`):** `funds.withdrawn`, `funds.withdraw.failed` — обновляет статус `NEW → PAID|FAILED`.
   - **saga (groupId `order-service-saga`):** `funds.reserved`, `funds.reserve.failed`, `stock.reserved`, `stock.reserve.failed`, `courier.reserved`, `courier.reserve.failed`, `funds.released`, `funds.release.failed`, `stock.released`, `stock.release.failed`, `courier.released`, `courier.release.failed` — двигает `SagaState` и запускает компенсации.

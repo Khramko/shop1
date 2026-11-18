@@ -355,7 +355,8 @@ shop/
 
 17 пунктов — в [`docs/limitations.md`](docs/limitations.md). Ключевые:
 
-- Нет Outbox pattern (событие может потеряться между `save()` и `kafka.send()`).
+- Outbox: [`docs/outbox.md`](docs/outbox.md)
+- Идемпотентность: [`docs/idempotency.md`](docs/idempotency.md)
 - Нет retry / DLQ.
 - Нет таймаута в `SagaOrchestrator` (сага «зависает» при потере ответа).
 - Kafka и Postgres — single-node.

@@ -97,8 +97,13 @@
 1. Клиент передаёт `Idempotency-Key: <uuid>` в заголовке `POST /orders`.
 2. `OrderService.createIdempotent()` ищет пару `(user_id, idempotency_key)` в таблице `idempotency_keys`.
 3. **Если найдена** — возвращает сохранённые `http_status` и `response_body` с заголовком `X-Idempotent-Replay: true`. Новый заказ **не создаётся**.
-4. **Если не найдена** — создаёт заказ (через `createSaga`), сериализует ответ в JSON и сохраняет в `idempotency_keys`.
-5. **Гонка** (два параллельных запроса с одним ключом) — ловится `DataIntegrityViolationException` по `uq_idempotency_user_key`, затем читается уже сохранённая запись и возвращается как replay.
+4. **Если не найдена** — `IdempotencyPlaceholderService.tryInsert` вставляет
+   placeholder `(user_id, key)` в `REQUIRES_NEW`. Уникальный индекс
+   `uq_idempotency_user_key` пропускает только одного.
+5. Кто получил `true` — создаёт заказ (через `createSaga`), затем
+   `updateResult` в `REQUIRES_NEW` заполняет `order_id`/`response_body`/`http_status`.
+6. Кто получил `false` — `awaitFilled` (до 5 с) читает строку `FOR UPDATE`,
+   ждёт заполнения, возвращает replay. Если не дождался — `409 idempotency_in_progress`.
 
 ### Ключевые элементы
 
@@ -106,6 +111,11 @@
 - Хранение полного тела ответа (`response_body TEXT`, `http_status INT`) — replay возвращает **байт-в-байт** тот же JSON.
 - TTL 24 часа — `IdempotencyKeyCleanupJob` (`@Scheduled(cron = "0 0 * * * *")`) удаляет старые ключи.
 - Обратная совместимость: если `Idempotency-Key` не передан — каждый вызов создаёт новый заказ (поведение v1).
+- **Placeholder-схема**: `IdempotencyKey` создаётся с `null` в `order_id`/`response_body`/`http_status`
+  (миграция `005`), заполняется после `createSaga`. `Integer httpStatus` — чтобы
+  `awaitFilled` отличал placeholder от результата.
+- **`REQUIRES_NEW`** для `tryInsert`/`updateResult` — чтобы `DataIntegrityViolationException`
+  не помечал транзакцию `createIdempotent` как `rollback-only`.
 
 ### Почему не «дедупликация по телу запроса»
 
@@ -150,6 +160,32 @@ Kafka даёт **at-least-once**: одно сообщение может быт�
 Для v1-событий (`funds.withdrawn`, `funds.withdraw.failed`) порядок тоже важен, но защищён статус-машиной `NEW → PAID/FAILED`.
 
 ---
+
+## Outbox (закрывает разрыв «БД → Kafka»)
+
+**Паттерн: Transactional Outbox.**
+
+До Outbox `SagaOrchestrator` и `OrderService.createSaga` публиковали события
+напрямую через `kafka.send()` после `save()` в БД. Это давало два разрыва:
+потеря события при сбое между коммитом и отправкой, и гонка идемпотентности
+(второй запрос успевал отправить `FUNDS_RESERVE_COMMAND` до `DataIntegrityViolationException`).
+
+Теперь:
+
+1. `OutboxService.enqueue(...)` пишет строку в `outbox` в **той же транзакции**,
+   что `Order` и `SagaState`.
+2. `OutboxPublisher` раз в `outbox.publisher.delay-ms` (2 с) читает
+   `PENDING`/`FAILED` через `SELECT ... FOR UPDATE SKIP LOCKED`, шлёт в Kafka,
+   обновляет статус.
+3. После 3 неудач — `DEAD_LETTER`; `cleanup()` раз в сутки удаляет `PUBLISHED` старше 7 дней.
+
+**Гарантии:** атомарность «заказ + событие», at-least-once доставка,
+идемпотентность consumer'ов (`reserved_funds.order_id` PK и т.п.).
+
+**Ограничения:** нет exactly-once (дубли возможны при падении между `send()` и
+`save(PUBLISHED)`), задержка публикации = `delay-ms`.
+
+Подробнее — [`docs/outbox.md`](outbox.md).
 
 ## Ссылки
 

@@ -38,6 +38,8 @@ public class OrderService {
     private final OrderEventPublisher v1Publisher;
     private final KafkaTemplate<String, Object> kafka;
     private final ObjectMapper objectMapper;
+    private final com.example.shop.order.outbox.OutboxService outbox;
+    private final IdempotencyPlaceholderService placeholder;
 
     @Value("${saga.enabled:true}")
     private boolean sagaEnabled;
@@ -47,13 +49,17 @@ public class OrderService {
                         IdempotencyKeyRepository idemRepo,
                         OrderEventPublisher v1Publisher,
                         KafkaTemplate<String, Object> kafka,
-                        ObjectMapper objectMapper) {
+                        ObjectMapper objectMapper,
+                        com.example.shop.order.outbox.OutboxService outbox,
+                        IdempotencyPlaceholderService placeholder) {
         this.orderRepository = orderRepository;
         this.sagaRepo = sagaRepo;
         this.idemRepo = idemRepo;
         this.v1Publisher = v1Publisher;
         this.kafka = kafka;
         this.objectMapper = objectMapper;
+        this.outbox = outbox;
+        this.placeholder = placeholder;
     }
 
     public boolean isSagaEnabled() { return sagaEnabled; }
@@ -69,21 +75,27 @@ public class OrderService {
         return createV1(userId, price);
     }
 
-    // ============================================================
-    //  NEW: идемпотентный create с Idempotency-Key
-    // ============================================================
     @Transactional
     public ResponseEntity<?> createIdempotent(Long userId, CreateOrderRequest req, String idemKey) {
+        // 1. Быстрый путь: ключ уже заполнен — replay
         Optional<IdempotencyKey> existing = idemRepo.findByUserIdAndIdempotencyKey(userId, idemKey);
-        if (existing.isPresent()) {
-            IdempotencyKey k = existing.get();
-            log.info("Idempotent replay userId={} key={} orderId={}", userId, idemKey, k.getOrderId());
-            return ResponseEntity.status(k.getHttpStatus())
-                    .header("X-Idempotent-Replay", "true")
-                    .header("Content-Type", "application/json")
-                    .body(k.getResponseBody());
+        if (existing.isPresent() && existing.get().getHttpStatus() != null) {
+            return replay(existing.get());
         }
 
+        // 2. Пытаемся «застолбить» ключ в отдельной транзакции (REQUIRES_NEW)
+        if (!placeholder.tryInsert(userId, idemKey)) {
+            // 3. Кто-то уже вставил — ждём, пока он заполнит результат
+            IdempotencyKey k = placeholder.awaitFilled(userId, idemKey, 5000);
+            if (k == null) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(java.util.Map.of("error", "idempotency_in_progress",
+                                "details", "Retry later with the same Idempotency-Key"));
+            }
+            return replay(k);
+        }
+
+        // 4. Placeholder наш — создаём заказ (Order + SagaState + outbox в одной транзакции)
         OrderResponse r = create(userId, req.getPrice(), req.getSku(), req.getQty(), req.getDeliverySlot());
 
         String bodyJson;
@@ -93,32 +105,32 @@ public class OrderService {
             throw new IllegalStateException("Cannot serialize order response", ex);
         }
 
-        try {
-            idemRepo.save(new IdempotencyKey(userId, idemKey, r.getOrderId(), bodyJson, 202));
-        } catch (DataIntegrityViolationException race) {
-            log.warn("Idempotency race userId={} key={} — reading existing", userId, idemKey);
-            IdempotencyKey k = idemRepo.findByUserIdAndIdempotencyKey(userId, idemKey)
-                    .orElseThrow(() -> new IllegalStateException("Idempotency key vanished after race"));
-            return ResponseEntity.status(k.getHttpStatus())
-                    .header("X-Idempotent-Replay", "true")
-                    .header("Content-Type", "application/json")
-                    .body(k.getResponseBody());
-        }
+        // 5. Заполняем placeholder в отдельной транзакции (REQUIRES_NEW)
+        placeholder.updateResult(userId, idemKey, r.getOrderId(), bodyJson, 202);
 
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(r);
     }
 
-    // ============================================================
-    //  Приватные методы (без изменений)
-    // ============================================================
+    private ResponseEntity<?> replay(IdempotencyKey k) {
+        log.info("Idempotent replay userId={} key={} orderId={}",
+                k.getUserId(), k.getIdempotencyKey(), k.getOrderId());
+        return ResponseEntity.status(k.getHttpStatus())
+                .header("X-Idempotent-Replay", "true")
+                .header("Content-Type", "application/json")
+                .body(k.getResponseBody());
+    }
+
+
     private OrderResponse createSaga(Long userId, BigDecimal price, String sku, Integer qty, String deliverySlot) {
         Order o = orderRepository.save(new Order(userId, price, sku, qty, deliverySlot));
         o.setStatus(Order.Status.RESERVING);
         orderRepository.save(o);
         sagaRepo.save(new SagaState(o.getId()));
-        kafka.send(Topics.ORDER_SAGA_STARTED, o.getId().toString(),
+        outbox.enqueue("Order", o.getId().toString(), "OrderSagaStarted",
+                Topics.ORDER_SAGA_STARTED,
                 new OrderSagaStartedEvent(o.getId(), userId, sku, qty, deliverySlot, price));
-        kafka.send(Topics.FUNDS_RESERVE_COMMAND, o.getId().toString(),
+        outbox.enqueue("Order", o.getId().toString(), "ReserveFundsCommand",
+                Topics.FUNDS_RESERVE_COMMAND,
                 new ReserveFundsCommand(o.getId(), userId, price));
         log.info("Saga[{}] started (funds → stock → courier)", o.getId());
         return OrderResponse.from(o);

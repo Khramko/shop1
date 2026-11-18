@@ -317,7 +317,10 @@ total run duration: 14.3s
 ### Что НЕ проверяется (известные пробелы)
 
 - **Идемпотентность consumer'ов при дублях.** Нет теста, который публикует `funds.withdrawn` дважды и проверяет, что баланс списан один раз. Логика есть (`processed_orders`, `reserved_funds`, `reservations`), но тестом не покрыта.
-- **Потеря событий (Outbox).** Нет теста на сбой между `save()` и `kafka.send()`.
+- **Outbox retry/DEAD_LETTER.** Нет теста, который роняет Kafka и проверяет, что
+  `OutboxPublisher` ретраит `PENDING`/`FAILED` и переводит в `DEAD_LETTER` после 3 попыток.
+- **Concurrent idempotency.** Нет теста на 10 параллельных `POST /orders` с одним
+  `Idempotency-Key` (placeholder-схема реализована, но E2E не покрывает).
 - **Retry / DLQ.** Consumer при исключении ретраит бесконечно — не проверяется.
 - **Concurrent orders.** Два заказа одного пользователя одновременно при балансе, хватающем только на один. `accounts` обновляется без оптимистичной блокировки (`@Version`), возможна гонка.
 - **JWT edge-cases.** Просроченный/поддельный токен, отсутствие `Authorization` — не покрыты (проверяются `SecurityConfig` вручную).
@@ -350,6 +353,33 @@ curl -s -X POST "$BASE/orders" \
   -H "Idempotency-Key: $IDEM" \
   -d '{"sku":"SKU-001","qty":1,"deliverySlot":"2026-11-17T10:00","price":100}' \
   -i | grep -i X-Idempotent-Replay   # → X-Idempotent-Replay: true
+```
+### Проверка гонки идемпотентности (ручная)
+
+Placeholder-схема закрывает гонку, но Postman/Newman её не покрывает —
+он делает последовательные запросы. Для проверки нужен параллельный запуск:
+
+```bash
+TOKEN=...   # из /auth/register
+KEY="race-$(date +%s)"
+for i in $(seq 1 10); do
+  curl -s -X POST localhost:8080/orders \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -H "Idempotency-Key: $KEY" \
+    -d '{"sku":"SKU-001","qty":1,"deliverySlot":"2026-11-20T10:00","price":100}' &
+done
+wait
+
+# ожидается: все ответы 202 с одним orderId (или 409 idempotency_in_progress)
+psql -h localhost -U app_user -d order_db \
+  -c "SELECT count(*) FROM outbox WHERE event_type='ReserveFundsCommand'"
+# 1
+psql -h localhost -U app_user -d billing_db \
+  -c "SELECT count(*) FROM reserved_funds"
+# 1
+curl -s localhost:8080/billing/accounts/me -H "Authorization: Bearer $TOKEN"
+# balance: 900 (1000 - 100, списано один раз)
 ```
 
 ---
